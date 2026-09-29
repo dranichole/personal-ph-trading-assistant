@@ -3,7 +3,7 @@
  * SERVICES LAYER (External APIs)
  * ==========================================
  */
-import { CONFIG } from './config.js';
+import { CONFIG, GCASH_PRE_IPO } from './config.js';
 
 const FALLBACK_BASE = { SM: 950.00, JFC: 260.00, BDO: 155.00, ALI: 34.00, GLO: 2100.00 };
 
@@ -18,8 +18,29 @@ function rangeBarCount(range) {
     return 22;
 }
 
+/** Deterministic PRNG so the Pre-IPO path stays stable for a given day + range. */
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+        a |= 0;
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function daySeed(extra = 0) {
+    const d = new Date();
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate() + extra;
+}
+
 export class DataService {
     static async fetchHistoricalData(ticker, range = CONFIG.dashboardRange) {
+        if (ticker === GCASH_PRE_IPO.ticker) {
+            return this.generateGCashPreIpoForecast(range);
+        }
+
         try {
             const response = await fetch(CONFIG.apiProxyTemplate(ticker, range));
             if (!response.ok) throw new Error('Proxy or Network error');
@@ -71,6 +92,65 @@ export class DataService {
             console.warn(`Fallback triggered for ${ticker} (${range}): ${error.message}`);
             return this.generateFallbackData(ticker, range);
         }
+    }
+
+    /**
+     * Hypothetical listed path for GCash if it already traded inside the IPO band.
+     * Anchored to offer ₱8–₱10, with mild upward drift from strong 2025 / Q1 2026 earnings.
+     */
+    static generateGCashPreIpoForecast(range = CONFIG.dashboardRange) {
+        const mid = (GCASH_PRE_IPO.offerLow + GCASH_PRE_IPO.offerHigh) / 2;
+        const rand = mulberry32(daySeed(rangeBarCount(range) * 17 + 2026));
+        let price = mid * (0.94 + rand() * 0.06);
+        const bars = [];
+        const today = new Date();
+        const needed = rangeBarCount(range);
+        let i = 0;
+
+        // Earnings momentum tilt: profitable 2025 + strong Q1 2026 → slight positive drift
+        const dailyDrift = 0.0012;
+        const vol = 0.018;
+
+        while (bars.length < needed) {
+            const date = new Date(today);
+            date.setDate(today.getDate() - i);
+            i += 1;
+            if (date.getDay() === 0 || date.getDay() === 6) continue;
+
+            const shock = (rand() - 0.48) * vol;
+            const open = price;
+            let close = open * (1 + dailyDrift + shock);
+            // Soft gravity toward the IPO indication band
+            if (close < GCASH_PRE_IPO.offerLow) close += (GCASH_PRE_IPO.offerLow - close) * 0.35;
+            if (close > GCASH_PRE_IPO.offerHigh * 1.08) close -= (close - GCASH_PRE_IPO.offerHigh) * 0.25;
+            close = Math.min(GCASH_PRE_IPO.offerHigh * 1.12, Math.max(GCASH_PRE_IPO.offerLow * 0.9, close));
+
+            const high = Math.max(open, close) * (1 + rand() * 0.012);
+            const low = Math.min(open, close) * (1 - rand() * 0.012);
+            price = close;
+
+            bars.unshift({
+                date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                timestamp: Math.floor(date.getTime() / 1000),
+                open: parseFloat(open.toFixed(2)),
+                high: parseFloat(high.toFixed(2)),
+                low: parseFloat(low.toFixed(2)),
+                close: parseFloat(close.toFixed(2)),
+                price: parseFloat(close.toFixed(2)),
+                volume: Math.round(2_500_000 + rand() * 4_500_000)
+            });
+        }
+
+        return {
+            ticker: GCASH_PRE_IPO.ticker,
+            name: GCASH_PRE_IPO.name,
+            bars,
+            source: 'preipo',
+            preIpo: true,
+            filing: { ...GCASH_PRE_IPO },
+            fetchedAt: Date.now(),
+            range
+        };
     }
 
     static generateFallbackData(ticker, range = CONFIG.dashboardRange) {

@@ -20,18 +20,51 @@ module.exports = async function(req, res) {
             recentCloses = [],
             avgVolume,
             dataSource,
-            fetchedAt
+            fetchedAt,
+            preIpo = null
         } = req.body;
 
-        const simulatedNote = dataSource === 'simulated'
-            ? 'WARNING: Price series is SIMULATED fallback data, not live PSE quotes. Be conservative and prefer Hold unless the user thesis is independent of this chart.'
-            : 'Price series is from live Yahoo Finance data (PSE).';
+        const isGCashPreIpo =
+            String(ticker || '').toUpperCase() === 'GCASH' ||
+            dataSource === 'preipo' ||
+            Boolean(preIpo);
 
-        const prompt = `You are an educational quantitative assistant for a personal Philippine Stock Exchange (PSE) journal. This is not financial advice.
+        const filing = preIpo || {
+            listingTarget: 'October 2026',
+            offerLow: 8.0,
+            offerHigh: 10.0,
+            netIncome2025B: 17.2,
+            netIncomeQ12026B: 5.6,
+            impliedValuationUpToB: 669,
+            issuer: 'Mynt (GCash)'
+        };
 
-Stock: ${stockName || ticker} (${ticker}.PS)
+        let dataNote;
+        if (isGCashPreIpo) {
+            dataNote = `CRITICAL: This is a SIMULATED Pre-IPO forecast for GCash / Mynt. It is NOT a listed PSE stock and must never be described as a live quote.
+Mynt / GCash IPO context (educational, from reported filing narrative):
+- Target listing window: ${filing.listingTarget || 'October 2026'}
+- Indicative offer price band: ₱${filing.offerLow ?? 8} to ₱${filing.offerHigh ?? 10}
+- Net income 2025: ₱${filing.netIncome2025B ?? 17.2} billion
+- Net income Q1 2026: ₱${filing.netIncomeQ12026B ?? 5.6} billion
+- Implied valuation (up to): ₱${filing.impliedValuationUpToB ?? 669} billion
+The chart is a hypothetical path if the name already traded near that IPO band, with mild upward drift reflecting strong earnings. Prefer Hold or Neutral for "action" unless framing a classroom IPO-watch thesis. Always say Pre-IPO / simulated.`;
+        } else if (dataSource === 'simulated') {
+            dataNote = 'WARNING: Price series is SIMULATED fallback data, not live PSE quotes. Be conservative and prefer Hold unless the user thesis is independent of this chart.';
+        } else {
+            dataNote = 'Price series is from live Yahoo Finance data (PSE).';
+        }
+
+        const listingLabel = isGCashPreIpo
+            ? `${stockName || 'GCash (Mynt)'} · SIMULATED PRE-IPO (not listed)`
+            : `${stockName || ticker} (${ticker}.PS)`;
+
+        const prompt = `You are an educational quantitative assistant for a personal Philippine markets journal. This is not financial advice.
+
+Stock: ${listingLabel}
+Ticker token: ${ticker}
 Range: ${range || '1mo'}
-Latest close: ₱${latestPrice}
+Latest simulated or market close: ₱${latestPrice}
 Range % change: ${pctChange}%
 Average volume: ${avgVolume ?? 'n/a'}
 SMA20: ${indicators.sma20 ?? 'n/a'}
@@ -43,12 +76,12 @@ Resistance: ₱${indicators.resistance ?? 'n/a'}
 SMA bias: ${indicators.smaBias || 'n/a'}
 Recent closes: ${Array.isArray(recentCloses) ? recentCloses.join(', ') : 'n/a'}
 Data fetched at (ms): ${fetchedAt || 'n/a'}
-${simulatedNote}
+${dataNote}
 
 Return raw JSON only with keys:
 "trend" (Bullish, Bearish, or Neutral),
 "action" (Buy, Sell, or Hold),
-"rationale" (2-4 sentences grounding the call in the numbers above; mention if data is simulated; include one invalidation level).
+"rationale" (2-4 sentences grounding the call in the numbers above; for GCash always state this is a Pre-IPO simulation anchored to Mynt filing figures; include one invalidation level).
 Do not use markdown.`;
 
         const response = await fetch(

@@ -66,8 +66,16 @@ export class AppState {
 
     loadWatchlist() {
         const stored = readJson(CONFIG.storageKeys.watchlist, null);
-        if (Array.isArray(stored)) return stored;
-        return CONFIG.defaultStocks.map(s => ({ ...s }));
+        let list = Array.isArray(stored)
+            ? stored.map(s => ({ ...s }))
+            : CONFIG.defaultStocks.map(s => ({ ...s }));
+        const gcash = CONFIG.defaultStocks.find(s => s.ticker === 'GCASH');
+        if (gcash && !list.some(s => s.ticker === 'GCASH')) {
+            list.push({ ...gcash });
+        } else if (gcash) {
+            list = list.map(s => (s.ticker === 'GCASH' ? { ...s, ...gcash } : s));
+        }
+        return list;
     }
 
     persistWatchlist() {
@@ -84,16 +92,21 @@ export class AppState {
         this.watchlist.push({
             ticker,
             name: stock.name || ticker,
-            sector: stock.sector || 'Custom'
+            sector: stock.sector || 'Custom',
+            preIpo: Boolean(stock.preIpo),
+            locked: Boolean(stock.locked)
         });
         this.persistWatchlist();
         return true;
     }
 
     removeFromWatchlist(ticker) {
+        const row = this.watchlist.find(s => s.ticker === ticker);
+        if (row?.locked || ticker === 'GCASH') return false;
         this.watchlist = this.watchlist.filter(s => s.ticker !== ticker);
         delete this.stockDataCache[ticker];
         this.persistWatchlist();
+        return true;
     }
 
     setSnapshot(ticker, range, snapshot) {

@@ -77,7 +77,10 @@ export class UIController {
             lastRefreshLabel: document.getElementById('lastRefreshLabel'),
             detailPurchaseAmount: document.getElementById('detailPurchaseAmount'),
             detailPurchaseMeta: document.getElementById('detailPurchaseMeta'),
-            themeToggle: document.getElementById('themeToggle')
+            themeToggle: document.getElementById('themeToggle'),
+            preIpoBanner: document.getElementById('preIpoBanner'),
+            preIpoBannerText: document.getElementById('preIpoBannerText'),
+            preIpoFilingFacts: document.getElementById('preIpoFilingFacts')
         };
 
         this.setupEventListeners();
@@ -374,8 +377,10 @@ export class UIController {
 
         stocks.forEach(stock => {
             const snap = this.app.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
+            const isPreIpo = Boolean(stock.preIpo || snap?.preIpo || snap?.source === 'preipo');
+            const filing = snap?.filing || (isPreIpo ? CONFIG.gcashPreIpo : null);
             const card = document.createElement('div');
-            card.className = 'bg-white border border-zinc-200 rounded-lg p-5 shadow-sm flex flex-col hover:shadow-md transition-shadow cursor-pointer relative';
+            card.className = `bg-white border border-zinc-200 rounded-lg p-5 shadow-sm flex flex-col hover:shadow-md transition-shadow cursor-pointer relative${isPreIpo ? ' preipo-card' : ''}`;
             card.onclick = () => this.app.openDetails(stock.ticker);
 
             const latest = snap ? snap.bars[snap.bars.length - 1].close : null;
@@ -385,22 +390,31 @@ export class UIController {
             const purchase = stats ? this.formatPurchaseLine(stats.purchase) : null;
 
             card.innerHTML = `
-                <button type="button" data-remove="${escapeHtml(stock.ticker)}" class="absolute top-3 right-3 text-zinc-300 hover:text-zinc-700 text-lg leading-none" aria-label="Remove ${escapeHtml(stock.ticker)}">&times;</button>
-                <div class="flex justify-between items-start mb-4 pr-6">
+                ${stock.locked ? '' : `<button type="button" data-remove="${escapeHtml(stock.ticker)}" class="absolute top-3 right-3 text-zinc-300 hover:text-zinc-700 text-lg leading-none" aria-label="Remove ${escapeHtml(stock.ticker)}">&times;</button>`}
+                <div class="flex justify-between items-start mb-4 ${stock.locked ? '' : 'pr-6'}">
                     <div>
                         <h3 class="text-sm font-bold text-zinc-900">${escapeHtml(stock.name)}</h3>
-                        <p class="text-xs font-medium text-zinc-500 mt-0.5 tracking-wider uppercase">PSE:${escapeHtml(stock.ticker)}</p>
+                        <p class="text-xs font-medium text-zinc-500 mt-0.5 tracking-wider uppercase">${
+                            isPreIpo ? 'Simulated · Pre-IPO' : `PSE:${escapeHtml(stock.ticker)}`
+                        }</p>
                     </div>
                     <span class="inline-flex items-center rounded bg-zinc-100 px-2 py-1 text-[9px] font-bold text-zinc-600 uppercase tracking-wide">
                         ${escapeHtml(stock.sector)}
                     </span>
                 </div>
+                ${isPreIpo ? `
+                <div class="mb-3 p-2 rounded border border-amber-100 bg-amber-50">
+                    <p class="text-[9px] font-bold uppercase tracking-widest text-amber-800">Pre-IPO forecast · not listed</p>
+                    <p class="text-[10px] text-zinc-600 mt-1 leading-snug">Hypothetical path if GCash already traded near the ₱${filing.offerLow.toFixed(2)}–₱${filing.offerHigh.toFixed(2)} IPO band. Target listing ${escapeHtml(filing.listingTarget)}.</p>
+                </div>` : ''}
                 <div class="flex justify-between items-end mb-2">
                     <div class="has-tip">
-                        <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">Last close</p>
+                        <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">${isPreIpo ? 'Model price' : 'Last close'}</p>
                         <p class="text-xl font-bold text-zinc-900">${latest == null ? 'Loading...' : '₱' + latest.toFixed(2)}</p>
-                        <p class="text-[10px] text-zinc-400 mt-1">Ending market price</p>
-                        <span class="tip-bubble">The stock’s ending price for the last trading day.</span>
+                        <p class="text-[10px] text-zinc-500 mt-1">${isPreIpo ? 'Simulated, not a PSE quote' : 'Ending market price'}</p>
+                        <span class="tip-bubble">${isPreIpo
+                            ? 'Education only. Built from Mynt IPO-band and earnings context, not live trading.'
+                            : 'The stock’s ending price for the last trading day.'}</span>
                     </div>
                     <div class="text-right">
                         <span class="text-xs font-bold ${isUp ? 'text-emerald-600' : 'text-red-600'}">${
@@ -409,10 +423,12 @@ export class UIController {
                     </div>
                 </div>
                 <div class="mb-3 flex flex-wrap gap-1.5 items-center">
-                    ${stats ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                    ${isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Pre-IPO forecast</span>` : ''}
+                    ${stats && !isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                         isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
                     }">${stats.trendLabel}</span>` : ''}
-                    ${source ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                    ${source === 'preipo' ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Simulated<span class="tip-bubble">Not listed on the PSE. Chart is a forecast model only.</span></span>`
+                        : source ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                         source === 'live' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
                     }">${source === 'live' ? 'Live' : 'Simulated'}<span class="tip-bubble">${
                         source === 'live'
@@ -420,7 +436,12 @@ export class UIController {
                             : 'Live quotes were unavailable, so this is practice data only.'
                     }</span></span>` : ''}
                 </div>
-                ${purchase ? `
+                ${isPreIpo && filing ? `
+                <div class="mb-3 bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2 text-[10px] text-zinc-600 space-y-0.5">
+                    <p>NI 2025: ₱${filing.netIncome2025B}B · Q1 2026: ₱${filing.netIncomeQ12026B}B</p>
+                    <p>Implied valuation up to ₱${filing.impliedValuationUpToB}B</p>
+                </div>` : ''}
+                ${purchase && !isPreIpo ? `
                 <div class="mb-3 has-tip bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2">
                     <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Starter buy idea</p>
                     <p class="text-sm font-semibold text-zinc-900 mt-0.5">${escapeHtml(purchase.amount)}</p>
@@ -431,14 +452,17 @@ export class UIController {
                      <canvas id="dash-chart-${escapeHtml(stock.ticker)}"></canvas>
                 </div>
                 <div class="mt-auto pt-4 border-t border-zinc-100 flex justify-between items-center text-xs">
-                     <span class="text-zinc-500 font-medium">View Analysis</span>
+                     <span class="text-zinc-500 font-medium">${isPreIpo ? 'View forecast' : 'View Analysis'}</span>
                      <svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </div>
             `;
-            card.querySelector('[data-remove]').addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.app.removeTicker(stock.ticker);
-            });
+            const removeBtn = card.querySelector('[data-remove]');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.app.removeTicker(stock.ticker);
+                });
+            }
             this.els.stockGrid.appendChild(card);
             if (snap) this.drawMiniChart(`dash-chart-${stock.ticker}`, snap.bars);
         });
@@ -843,25 +867,47 @@ export class UIController {
         this.els.detailView.classList.remove('hidden');
         this.setNav('dashboard');
         this.els.detailName.textContent = stock.name;
-        this.els.detailTicker.textContent = `PSE:${stock.ticker}`;
+        this.els.detailTicker.textContent = stock.preIpo ? 'Simulated · Pre-IPO' : `PSE:${stock.ticker}`;
         this.els.detailDataMeta.textContent = 'Loading series…';
         this.syncRangeButtons();
     }
 
     showDetails(stock, snapshot, { soft = false } = {}) {
         const stats = summarizeBars(snapshot.bars);
+        const isPreIpo = Boolean(stock.preIpo || snapshot.preIpo || snapshot.source === 'preipo');
+        const filing = snapshot.filing || (isPreIpo ? CONFIG.gcashPreIpo : null);
+
         this.els.detailName.textContent = stock.name;
-        this.els.detailTicker.textContent = `PSE:${stock.ticker}`;
+        this.els.detailTicker.textContent = isPreIpo ? 'Simulated · Pre-IPO forecast' : `PSE:${stock.ticker}`;
         this.els.detailPrice.textContent = `₱${stats.latestClose.toFixed(2)}`;
         const up = stats.pctChange >= 0;
         this.els.detailPctChange.textContent = `${up ? '+' : ''}${stats.pctChange.toFixed(2)}%`;
         this.els.detailPctChange.className = `text-sm font-semibold mt-1 ${up ? 'text-emerald-600' : 'text-red-600'}`;
-        this.els.detailDataMeta.textContent =
-            `${snapshot.source === 'live' ? 'Live Yahoo/PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
+        this.els.detailDataMeta.textContent = isPreIpo
+            ? `Pre-IPO simulation · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`
+            : `${snapshot.source === 'live' ? 'Live Yahoo/PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
 
         const purchase = this.formatPurchaseLine(stats.purchase);
         if (this.els.detailPurchaseAmount) this.els.detailPurchaseAmount.textContent = purchase.amount;
-        if (this.els.detailPurchaseMeta) this.els.detailPurchaseMeta.textContent = purchase.meta;
+        if (this.els.detailPurchaseMeta) {
+            this.els.detailPurchaseMeta.textContent = isPreIpo
+                ? 'Practice sizing only. GCash is not listed yet.'
+                : purchase.meta;
+        }
+
+        if (this.els.preIpoBanner) {
+            this.els.preIpoBanner.classList.toggle('hidden', !isPreIpo);
+            if (isPreIpo && filing && this.els.preIpoBannerText) {
+                this.els.preIpoBannerText.textContent =
+                    'This chart is not a PSE listing. It is a classroom forecast of how GCash might trade if it already existed inside Mynt’s indicated IPO band, using reported earnings for momentum context.';
+                this.els.preIpoFilingFacts.innerHTML = `
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Listing target</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.listingTarget)}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Offer band</p><p class="font-semibold text-zinc-800">₱${filing.offerLow.toFixed(2)} – ₱${filing.offerHigh.toFixed(2)}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">NI 2025 / Q1’26</p><p class="font-semibold text-zinc-800">₱${filing.netIncome2025B}B / ₱${filing.netIncomeQ12026B}B</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Valuation up to</p><p class="font-semibold text-zinc-800">₱${filing.impliedValuationUpToB}B</p></div>
+                `;
+            }
+        }
 
         this.els.dashboardView.classList.add('hidden');
         this.els.journalView.classList.add('hidden');
@@ -872,9 +918,16 @@ export class UIController {
         this.drawDetailCharts(snapshot);
         if (!soft) this.renderDetailJournal(stock.ticker);
 
-        const simulated = snapshot.source === 'simulated';
-        this.els.aiSimBanner.classList.toggle('hidden', !simulated);
-        this.els.runAIBtn.textContent = simulated ? 'Run analysis anyway' : 'Run Market Analysis';
+        const caution = snapshot.source === 'simulated' || isPreIpo;
+        this.els.aiSimBanner.classList.toggle('hidden', !caution);
+        this.els.aiSimBanner.textContent = isPreIpo
+            ? 'Pre-IPO simulation only. AI will use Mynt filing figures and must not treat this as a live PSE quote.'
+            : 'Chart is simulated fallback data. Analysis will treat it as untrustworthy.';
+        this.els.runAIBtn.textContent = isPreIpo
+            ? 'Run Pre-IPO analysis'
+            : caution
+                ? 'Run analysis anyway'
+                : 'Run Market Analysis';
 
         if (soft) return;
 
@@ -910,7 +963,9 @@ export class UIController {
     setAIResults(aiData, at, source) {
         this.els.outTrend.textContent = aiData.trend;
         this.els.outRationale.textContent = aiData.rationale;
-        this.els.aiAsOf.textContent = `As of ${formatFetchedAt(at)}${source === 'simulated' ? ' · simulated prices' : ''}`;
+        this.els.aiAsOf.textContent = `As of ${formatFetchedAt(at)}${
+            source === 'preipo' ? ' · Pre-IPO simulation' : source === 'simulated' ? ' · simulated prices' : ''
+        }`;
 
         const action = String(aiData.action).toUpperCase();
         this.els.outAction.textContent = action;

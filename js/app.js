@@ -178,6 +178,10 @@ class TradingAssistantApp {
 
     async addTicker(rawTicker) {
         const ticker = rawTicker.trim().toUpperCase().replace(/\.PS$/i, '');
+        if (ticker === 'GCASH') {
+            this.ui.setWatchlistMessage('GCash is already on the watchlist as a Pre-IPO forecast card.');
+            return;
+        }
         if (!/^[A-Z0-9]{1,10}$/.test(ticker)) {
             this.ui.setWatchlistMessage('Use a PSE ticker like SM or ALI.', true);
             return;
@@ -206,7 +210,11 @@ class TradingAssistantApp {
     }
 
     removeTicker(ticker) {
-        this.state.removeFromWatchlist(ticker);
+        const removed = this.state.removeFromWatchlist(ticker);
+        if (!removed) {
+            this.ui.setWatchlistMessage('The GCash Pre-IPO forecast card stays on the watchlist for education.');
+            return;
+        }
         if (this.state.activeStock?.ticker === ticker) {
             this.state.activeStock = null;
             this.ui.showDashboard();
@@ -260,7 +268,8 @@ class TradingAssistantApp {
                 recentCloses: stats.recentCloses,
                 avgVolume: stats.avgVolume,
                 dataSource: snapshot.source,
-                fetchedAt: snapshot.fetchedAt
+                fetchedAt: snapshot.fetchedAt,
+                preIpo: (snapshot.preIpo || stock.preIpo) ? (snapshot.filing || CONFIG.gcashPreIpo) : null
             });
             this.state.setAiCache(cacheKey, aiData);
             this.ui.setAIResults(aiData, Date.now(), snapshot.source);

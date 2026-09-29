@@ -35,6 +35,7 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Clear “last close” wording (ending market price, not a sale price)
 - Educational **starter buy idea** (example size near support using a fixed practice risk budget)
 - Smooth fade tooltips on indicator tiles and key labels
+- **GCash Pre-IPO forecast** card: hypothetical listed path near Mynt’s indicated ₱8–₱10 offer band, labeled simulated / not listed; AI receives 2025 / Q1 2026 earnings and valuation context from filing narrative
 
 ### AI mentor
 - Runs through **`/api/analyze`** so `GEMINI_API_KEY` stays in Vercel env vars

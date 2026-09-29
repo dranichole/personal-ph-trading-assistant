@@ -260,6 +260,13 @@ header.sticky {
     background: transparent !important;
     color: var(--muted) !important;
 }
-.nav-pill:not(.active):hover {
-    color: var(--ink) !important;
+.preipo-banner {
+    background: color-mix(in srgb, var(--accent-2) 12%, var(--card));
+    border-color: color-mix(in srgb, var(--accent-2) 40%, var(--line));
+}
+.preipo-banner .text-xs.font-bold {
+    color: var(--accent-2);
+}
+.preipo-card {
+    outline: 2px solid color-mix(in srgb, var(--accent-2) 55%, var(--line));
 }
