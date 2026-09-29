@@ -19,8 +19,7 @@ module.exports = async function(req, res) {
         Provide a JSON response with exactly these keys: 
         "price" (the current price), "trend" (Bullish, Bearish, or Neutral), "action" (Buy, Sell, or Hold), and "rationale" (a concise 2-sentence explanation of current market sentiment based on recent news or fundamentals). Do not use markdown blocks, just return raw JSON.`;
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`, {
-            method: 'POST',
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`, {            method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
