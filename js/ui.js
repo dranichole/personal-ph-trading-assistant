@@ -4,22 +4,51 @@
  * ==========================================
  */
 import { CONFIG } from './config.js';
+import { summarizeBars } from './indicators.js';
+
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, s => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[s]));
+}
+
+function formatFetchedAt(ms) {
+    return new Date(ms).toLocaleString('en-PH', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+    });
+}
+
+function formatVolume(n) {
+    if (!n) return '—';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(n);
+}
 
 export class UIController {
     constructor(app) {
         this.app = app;
-        
-        // DOM Elements cache
+
         this.els = {
             date: document.getElementById('currentDate'),
             dashboardView: document.getElementById('dashboardView'),
             detailView: document.getElementById('detailView'),
+            journalView: document.getElementById('journalView'),
             stockGrid: document.getElementById('stockGrid'),
+            emptyWatchlist: document.getElementById('emptyWatchlist'),
+            watchlistMessage: document.getElementById('watchlistMessage'),
+            addTickerForm: document.getElementById('addTickerForm'),
+            addTickerInput: document.getElementById('addTickerInput'),
+            sectorFilter: document.getElementById('sectorFilter'),
+            sortSelect: document.getElementById('sortSelect'),
             backBtn: document.getElementById('backBtn'),
+            rangeButtons: document.getElementById('rangeButtons'),
             detailName: document.getElementById('detailStockName'),
             detailTicker: document.getElementById('detailStockTicker'),
             detailPrice: document.getElementById('detailLatestPrice'),
-            // Removed apiKeyInput and apiKeyError
+            detailPctChange: document.getElementById('detailPctChange'),
+            detailDataMeta: document.getElementById('detailDataMeta'),
+            indicatorRow: document.getElementById('indicatorRow'),
             runAIBtn: document.getElementById('runAIBtn'),
             retryAIBtn: document.getElementById('retryAIBtn'),
             aiInputState: document.getElementById('aiInputState'),
@@ -27,13 +56,36 @@ export class UIController {
             aiErrorState: document.getElementById('aiErrorState'),
             aiResultsState: document.getElementById('aiResultsState'),
             aiErrorText: document.getElementById('aiErrorText'),
+            aiSimBanner: document.getElementById('aiSimBanner'),
+            aiAsOf: document.getElementById('aiAsOf'),
             outTrend: document.getElementById('outTrend'),
             outAction: document.getElementById('outAction'),
-            outRationale: document.getElementById('outRationale')
+            outRationale: document.getElementById('outRationale'),
+            navDashboard: document.getElementById('navDashboard'),
+            navJournal: document.getElementById('navJournal'),
+            journalList: document.getElementById('journalList'),
+            journalEmpty: document.getElementById('journalEmpty'),
+            journalForm: document.getElementById('journalForm'),
+            detailJournalForm: document.getElementById('detailJournalForm'),
+            detailJournalList: document.getElementById('detailJournalList'),
+            detailJournalDate: document.getElementById('detailJournalDate'),
+            journalDate: document.getElementById('journalDate'),
+            chartStyleButtons: document.getElementById('chartStyleButtons'),
+            candleHelp: document.getElementById('candleHelp'),
+            chartLoadingOverlay: document.getElementById('chartLoadingOverlay'),
+            chartLoadingText: document.getElementById('chartLoadingText'),
+            lastRefreshLabel: document.getElementById('lastRefreshLabel'),
+            detailPurchaseAmount: document.getElementById('detailPurchaseAmount'),
+            detailPurchaseMeta: document.getElementById('detailPurchaseMeta'),
+            themeToggle: document.getElementById('themeToggle')
         };
 
         this.setupEventListeners();
         this.initDate();
+        this.buildRangeButtons();
+        const today = new Date().toISOString().slice(0, 10);
+        this.els.detailJournalDate.value = today;
+        this.els.journalDate.value = today;
     }
 
     initDate() {
@@ -48,92 +100,379 @@ export class UIController {
             this.els.aiErrorState.classList.add('hidden');
             this.els.aiInputState.classList.remove('hidden');
         });
-        
-        // Removed apiKeyInput event listener
+
+        this.els.addTickerForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.app.addTicker(this.els.addTickerInput.value);
+            this.els.addTickerInput.value = '';
+        });
+
+        this.els.sortSelect.addEventListener('change', () => this.app.setSort(this.els.sortSelect.value));
+        this.els.sectorFilter.addEventListener('change', () => this.app.setSectorFilter(this.els.sectorFilter.value));
+
+        this.els.navDashboard.addEventListener('click', () => this.showDashboard());
+        this.els.navJournal.addEventListener('click', () => this.showJournal());
+        this.els.themeToggle?.addEventListener('click', () => {
+            const next = this.app.state.theme === 'night' ? 'day' : 'night';
+            this.app.setTheme(next);
+        });
+        this.els.chartStyleButtons.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-chart-style]');
+            if (btn) this.app.setChartStyle(btn.getAttribute('data-chart-style'));
+        });
+
+        this.els.journalForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.app.addJournalFromForm({
+                ticker: document.getElementById('journalTicker').value,
+                date: document.getElementById('journalDate').value,
+                thesis: document.getElementById('journalThesis').value,
+                invalidation: document.getElementById('journalInvalidation').value,
+                outcome: document.getElementById('journalOutcome').value,
+                attachAi: false
+            });
+            this.els.journalForm.reset();
+            this.els.journalDate.value = new Date().toISOString().slice(0, 10);
+        });
+
+        this.els.detailJournalForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.app.addJournalFromForm({
+                ticker: this.app.state.activeStock?.ticker,
+                date: document.getElementById('detailJournalDate').value,
+                thesis: document.getElementById('detailJournalThesis').value,
+                invalidation: document.getElementById('detailJournalInvalidation').value,
+                outcome: document.getElementById('detailJournalOutcome').value,
+                attachAi: document.getElementById('detailJournalAttachAi').checked
+            });
+            document.getElementById('detailJournalThesis').value = '';
+            document.getElementById('detailJournalInvalidation').value = '';
+            document.getElementById('detailJournalAttachAi').checked = false;
+        });
+
+        this.els.journalList.addEventListener('click', (e) => this.handleJournalClick(e));
+        this.els.detailJournalList.addEventListener('click', (e) => this.handleJournalClick(e));
+        this.els.journalList.addEventListener('change', (e) => this.handleJournalChange(e));
+        this.els.detailJournalList.addEventListener('change', (e) => this.handleJournalChange(e));
     }
 
-    createDashboardCards() {
+    handleJournalClick(e) {
+        const btn = e.target.closest('[data-journal-delete]');
+        if (btn) this.app.deleteJournalEntry(btn.getAttribute('data-journal-delete'));
+    }
+
+    handleJournalChange(e) {
+        const sel = e.target.closest('[data-journal-outcome]');
+        if (sel) this.app.setJournalOutcome(sel.getAttribute('data-journal-outcome'), sel.value);
+    }
+
+    buildRangeButtons() {
+        this.els.rangeButtons.innerHTML = '';
+        CONFIG.ranges.forEach(range => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = range.label;
+            btn.dataset.range = range.id;
+            btn.className = 'range-btn px-2.5 py-1 text-[11px] font-semibold rounded text-zinc-500';
+            btn.addEventListener('click', () => this.app.changeRange(range.id));
+            this.els.rangeButtons.appendChild(btn);
+        });
+    }
+
+    syncChartStyleButtons() {
+        const style = this.app.state.chartStyle === 'line' ? 'line' : 'combo';
+        this.els.chartStyleButtons.querySelectorAll('.chart-style-btn').forEach(btn => {
+            const active = btn.getAttribute('data-chart-style') === style;
+            btn.className = `chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded ${
+                active ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'
+            }`;
+            btn.disabled = this.app.state.chartBusy;
+        });
+        if (style === 'line') {
+            this.els.candleHelp.classList.add('hidden');
+        } else {
+            this.els.candleHelp.classList.remove('hidden');
+            this.els.candleHelp.textContent =
+                'Candles show each day’s open, high, low, and close. The smooth line is the recent average with a soft fade underneath.';
+        }
+    }
+
+    syncThemeToggle() {
+        const theme = this.app.state.theme;
+        const btn = this.els.themeToggle;
+        if (!btn) return;
+        const isNight = theme === 'night';
+        btn.setAttribute('aria-label', isNight ? 'Switch to day mode' : 'Switch to night mode');
+        btn.innerHTML = isNight
+            ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"></path></svg>`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>`;
+    }
+
+    chartColors() {
+        const night = document.documentElement.getAttribute('data-theme') === 'night';
+        if (night) {
+            return {
+                up: '#22c55e',
+                down: '#f43f5e',
+                line: '#67e8f9',
+                closeUp: '#34d399',
+                closeDown: '#fb7185',
+                fillTopUp: 'rgba(52, 211, 153, 0.28)',
+                fillTopDown: 'rgba(251, 113, 133, 0.28)',
+                fillBottom: 'rgba(0, 0, 0, 0)',
+                fillTop: 'rgba(103, 232, 249, 0.30)',
+                grid: '#2a2f3a',
+                muted: '#b4b4b4',
+                tipBg: '#262626',
+                ink: '#f5f5f5'
+            };
+        }
+        return {
+            up: '#059669',
+            down: '#e11d48',
+            line: '#0e7490',
+            closeUp: '#047857',
+            closeDown: '#be123c',
+            fillTopUp: 'rgba(4, 120, 87, 0.22)',
+            fillTopDown: 'rgba(190, 18, 60, 0.20)',
+            fillBottom: 'rgba(255, 255, 255, 0)',
+            fillTop: 'rgba(14, 116, 144, 0.26)',
+            grid: '#ebe7ea',
+            muted: '#4b5563',
+            tipBg: '#1f1f1f',
+            ink: '#1a1a1a'
+        };
+    }
+
+    areaGradient(ctx, chartArea, top, bottom) {
+        if (!chartArea) return top;
+        const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+        g.addColorStop(0, top);
+        g.addColorStop(1, bottom);
+        return g;
+    }
+
+    beginnerCandleTip(bar) {
+        const up = bar.close >= bar.open;
+        return up
+            ? `Up day. Buyers finished stronger. Close ₱${bar.close.toFixed(2)} was above the open.`
+            : `Down day. Sellers finished stronger. Close ₱${bar.close.toFixed(2)} was below the open.`;
+    }
+
+    beginnerLineTip(label, value) {
+        if (label === 'Trend line' || label === 'SMA20') {
+            return `Trend line (20-day average): ₱${Number(value).toFixed(2)}. A smooth path of recent typical prices.`;
+        }
+        if (label === 'SMA50') {
+            return `Slower average (50-day): ₱${Number(value).toFixed(2)}. Shows the longer drift.`;
+        }
+        return `Closing price: ₱${Number(value).toFixed(2)}. Where the stock ended that day.`;
+    }
+
+    redrawVisibleCharts() {
+        if (this.app.state.currentView === 'dashboard') {
+            this.renderDashboard();
+            return;
+        }
+        if (this.app.state.currentView === 'detail' && this.app.state.activeStock) {
+            const snap = this.app.state.getSnapshot(this.app.state.activeStock.ticker, this.app.state.activeRange);
+            if (snap) this.showDetails(this.app.state.activeStock, snap, { soft: true });
+        }
+    }
+
+    syncRangeButtons() {
+        this.els.rangeButtons.querySelectorAll('.range-btn').forEach(btn => {
+            const active = btn.dataset.range === this.app.state.activeRange;
+            btn.className = `range-btn px-2.5 py-1 text-[11px] font-semibold rounded ${
+                active ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'
+            }`;
+            btn.disabled = this.app.state.chartBusy;
+        });
+    }
+
+    setChartBusy(busy, message = 'Updating chart…') {
+        this.app.state.chartBusy = busy;
+        if (this.els.chartLoadingText && message) {
+            this.els.chartLoadingText.textContent = message;
+        }
+        this.els.chartLoadingOverlay?.classList.toggle('hidden', !busy);
+        this.els.rangeButtons?.classList.toggle('chart-controls-locked', busy);
+        this.els.chartStyleButtons?.classList.toggle('chart-controls-locked', busy);
+        this.els.backBtn.disabled = busy;
+        this.els.backBtn.classList.toggle('opacity-50', busy);
+        this.els.backBtn.classList.toggle('pointer-events-none', busy);
+        this.syncRangeButtons();
+        this.syncChartStyleButtons();
+    }
+
+    resetChartCanvas(canvasId) {
+        this.app.state.destroyChart(canvasId);
+        const old = document.getElementById(canvasId);
+        if (!old || !old.parentNode) return null;
+        const fresh = old.cloneNode(false);
+        fresh.removeAttribute('width');
+        fresh.removeAttribute('height');
+        old.parentNode.replaceChild(fresh, old);
+        return fresh;
+    }
+
+    setNav(view) {
+        this.els.navDashboard.className = `nav-pill px-3 py-1.5 rounded-full${view === 'dashboard' ? ' active' : ''}`;
+        this.els.navJournal.className = `nav-pill px-3 py-1.5 rounded-full${view === 'journal' ? ' active' : ''}`;
+    }
+
+    syncWatchlistControls() {
+        const current = this.els.sectorFilter.value;
+        this.els.sectorFilter.innerHTML = '<option value="all">All sectors</option>';
+        this.app.state.sectors().forEach(sector => {
+            const opt = document.createElement('option');
+            opt.value = sector;
+            opt.textContent = sector;
+            this.els.sectorFilter.appendChild(opt);
+        });
+        this.els.sectorFilter.value = this.app.state.sectors().includes(current) || current === 'all'
+            ? current
+            : 'all';
+    }
+
+    setWatchlistMessage(msg, isError = false) {
+        this.els.watchlistMessage.textContent = msg;
+        this.els.watchlistMessage.classList.remove('hidden');
+        this.els.watchlistMessage.className = `mb-4 text-xs ${isError ? 'text-red-600' : 'text-zinc-500'}`;
+    }
+
+    setRefreshStatus(text) {
+        if (this.els.lastRefreshLabel) this.els.lastRefreshLabel.textContent = text;
+    }
+
+    updateRefreshIndicator() {
+        if (!this.els.lastRefreshLabel) return;
+        const at = this.app.state.lastRefreshedAt;
+        if (!at) {
+            this.els.lastRefreshLabel.textContent = 'Waiting for first price load…';
+            return;
+        }
+        const time = new Date(at).toLocaleTimeString('en-PH', {
+            hour: 'numeric',
+            minute: '2-digit'
+        });
+        this.els.lastRefreshLabel.textContent = `Last refreshed ${time}`;
+    }
+
+    formatPurchaseLine(purchase) {
+        if (!purchase?.entry || !purchase?.spend) return { amount: '—', meta: 'Need more price history.' };
+        return {
+            amount: `~₱${purchase.spend.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
+            meta: `${purchase.shares} sh @ ₱${purchase.entry.toFixed(2)} · stop ~₱${purchase.stop.toFixed(2)} · practice only`
+        };
+    }
+
+    renderDashboard() {
         this.els.stockGrid.innerHTML = '';
-        CONFIG.stocks.forEach(stock => {
+        const stocks = this.app.state.visibleStocks();
+        this.els.emptyWatchlist.classList.toggle('hidden', stocks.length > 0);
+
+        stocks.forEach(stock => {
+            const snap = this.app.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
             const card = document.createElement('div');
-            card.className = "bg-white border border-zinc-200 rounded-lg p-5 shadow-sm flex flex-col hover:shadow-md transition-shadow cursor-pointer";
-            // Using event delegation via inline arrow function for simplicity in this context
+            card.className = 'bg-white border border-zinc-200 rounded-lg p-5 shadow-sm flex flex-col hover:shadow-md transition-shadow cursor-pointer relative';
             card.onclick = () => this.app.openDetails(stock.ticker);
+
+            const latest = snap ? snap.bars[snap.bars.length - 1].close : null;
+            const stats = snap ? summarizeBars(snap.bars) : null;
+            const isUp = stats ? stats.pctChange >= 0 : true;
+            const source = snap?.source;
+            const purchase = stats ? this.formatPurchaseLine(stats.purchase) : null;
+
             card.innerHTML = `
-                <div class="flex justify-between items-start mb-4">
+                <button type="button" data-remove="${escapeHtml(stock.ticker)}" class="absolute top-3 right-3 text-zinc-300 hover:text-zinc-700 text-lg leading-none" aria-label="Remove ${escapeHtml(stock.ticker)}">&times;</button>
+                <div class="flex justify-between items-start mb-4 pr-6">
                     <div>
-                        <h3 class="text-sm font-bold text-zinc-900">${stock.name}</h3>
-                        <p class="text-xs font-medium text-zinc-500 mt-0.5 tracking-wider uppercase">PSE:${stock.ticker}</p>
+                        <h3 class="text-sm font-bold text-zinc-900">${escapeHtml(stock.name)}</h3>
+                        <p class="text-xs font-medium text-zinc-500 mt-0.5 tracking-wider uppercase">PSE:${escapeHtml(stock.ticker)}</p>
                     </div>
                     <span class="inline-flex items-center rounded bg-zinc-100 px-2 py-1 text-[9px] font-bold text-zinc-600 uppercase tracking-wide">
-                        ${stock.sector}
+                        ${escapeHtml(stock.sector)}
                     </span>
                 </div>
-                
-                <div class="flex justify-between items-end mb-4">
-                    <div>
-                        <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">Est. Price</p>
-                        <p class="text-xl font-bold text-zinc-900" id="dash-price-${stock.ticker}">Loading...</p>
+                <div class="flex justify-between items-end mb-2">
+                    <div class="has-tip">
+                        <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">Last close</p>
+                        <p class="text-xl font-bold text-zinc-900">${latest == null ? 'Loading...' : '₱' + latest.toFixed(2)}</p>
+                        <p class="text-[10px] text-zinc-400 mt-1">Ending market price</p>
+                        <span class="tip-bubble">The stock’s ending price for the last trading day.</span>
                     </div>
                     <div class="text-right">
-                        <span id="dash-trend-${stock.ticker}" class="text-xs font-bold uppercase tracking-wider text-zinc-400">--</span>
+                        <span class="text-xs font-bold ${isUp ? 'text-emerald-600' : 'text-red-600'}">${
+                            stats ? `${stats.pctChange >= 0 ? '+' : ''}${stats.pctChange.toFixed(2)}%` : '--'
+                        }</span>
                     </div>
                 </div>
-
-                <div class="h-24 mb-4 w-full relative">
-                     <canvas id="dash-chart-${stock.ticker}"></canvas>
+                <div class="mb-3 flex flex-wrap gap-1.5 items-center">
+                    ${stats ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                        isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                    }">${stats.trendLabel}</span>` : ''}
+                    ${source ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                        source === 'live' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    }">${source === 'live' ? 'Live' : 'Simulated'}<span class="tip-bubble">${
+                        source === 'live'
+                            ? 'Prices came from Yahoo Finance for the PSE.'
+                            : 'Live quotes were unavailable, so this is practice data only.'
+                    }</span></span>` : ''}
                 </div>
-                
+                ${purchase ? `
+                <div class="mb-3 has-tip bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2">
+                    <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Starter buy idea</p>
+                    <p class="text-sm font-semibold text-zinc-900 mt-0.5">${escapeHtml(purchase.amount)}</p>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">${escapeHtml(purchase.meta)}</p>
+                    <span class="tip-bubble">A practice-sized buy near recent support. About ₱1,000 would be at risk if the stop is hit. Not advice.</span>
+                </div>` : ''}
+                <div class="h-28 mb-4 w-full relative">
+                     <canvas id="dash-chart-${escapeHtml(stock.ticker)}"></canvas>
+                </div>
                 <div class="mt-auto pt-4 border-t border-zinc-100 flex justify-between items-center text-xs">
                      <span class="text-zinc-500 font-medium">View Analysis</span>
                      <svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </div>
             `;
+            card.querySelector('[data-remove]').addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.app.removeTicker(stock.ticker);
+            });
             this.els.stockGrid.appendChild(card);
+            if (snap) this.drawMiniChart(`dash-chart-${stock.ticker}`, snap.bars);
         });
     }
 
-    updateDashboardCardData(ticker, latestPrice, trendData) {
-        document.getElementById(`dash-price-${ticker}`).textContent = `₱${latestPrice.toFixed(2)}`;
-        
-        const trendEl = document.getElementById(`dash-trend-${ticker}`);
-        const isUp = trendData.last > trendData.first;
-        
-        trendEl.textContent = isUp ? 'BULLISH' : 'BEARISH';
-        trendEl.className = `text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wider ${isUp ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`;
-    }
+    drawMiniChart(canvasId, bars) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || typeof Chart === 'undefined' || !bars?.length) return;
+        this.app.state.destroyChart(canvasId);
+        const colors = this.chartColors();
+        const prices = bars.map(d => d.close);
+        const isUp = prices[prices.length - 1] >= prices[0];
+        const stroke = isUp ? colors.closeUp : colors.closeDown;
+        const fillTop = isUp ? colors.fillTopUp : colors.fillTopDown;
 
-    drawChart(canvasId, data, isMini = false, appStateRef) {
-        const ctx = document.getElementById(canvasId).getContext('2d');
-        const labels = data.map(d => d.date);
-        const prices = data.map(d => d.price);
-        
-        const firstPrice = prices[0];
-        const lastPrice = prices[prices.length - 1];
-        const isUp = lastPrice >= firstPrice;
-        const lineColor = isUp ? '#10b981' : '#f43f5e';
-        const bgColor = isUp ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)';
-
-        // Ensure Chart.js is available globally (loaded via CDN in HTML)
-        if (typeof Chart === 'undefined') {
-            console.error('Chart.js is not loaded.');
-            return;
-        }
-
-        const chart = new Chart(ctx, {
+        const chart = new Chart(canvas.getContext('2d'), {
             type: 'line',
             data: {
-                labels: labels,
+                labels: bars.map(d => d.date),
                 datasets: [{
                     label: 'Close',
                     data: prices,
-                    borderColor: lineColor,
-                    backgroundColor: bgColor,
-                    borderWidth: isMini ? 1.5 : 2,
-                    pointRadius: isMini ? 0 : 3,
-                    pointHoverRadius: 5,
-                    fill: !isMini,
-                    tension: 0.1
+                    borderColor: stroke,
+                    borderWidth: 2.25,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: true,
+                    tension: 0.15,
+                    backgroundColor: (context) => {
+                        const { chart } = context;
+                        const { ctx, chartArea } = chart;
+                        if (!chartArea) return fillTop;
+                        return this.areaGradient(ctx, chartArea, fillTop, colors.fillBottom);
+                    }
                 }]
             },
             options: {
@@ -142,66 +481,447 @@ export class UIController {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        enabled: !isMini,
+                        enabled: true,
                         mode: 'index',
                         intersect: false,
-                        backgroundColor: '#18181b',
-                        callbacks: { label: (ctx) => ' ₱' + ctx.parsed.y.toFixed(2) }
+                        backgroundColor: colors.tipBg,
+                        displayColors: false,
+                        callbacks: {
+                            title: (items) => items[0]?.label || '',
+                            label: (ctx) => {
+                                const b = bars[ctx.dataIndex];
+                                if (!b) return '';
+                                return this.beginnerLineTip('Close', b.close);
+                            },
+                            afterBody: (items) => {
+                                const b = bars[items[0]?.dataIndex];
+                                if (!b) return [];
+                                return [`O ₱${b.open.toFixed(2)}  H ₱${b.high.toFixed(2)}  L ₱${b.low.toFixed(2)}  C ₱${b.close.toFixed(2)}`];
+                            }
+                        }
                     }
                 },
                 scales: {
-                    x: { display: !isMini, grid: { display: false } },
-                    y: { display: !isMini, grid: { color: '#f4f4f5' } }
+                    x: { display: false },
+                    y: { display: false, beginAtZero: false }
                 },
                 interaction: { mode: 'nearest', axis: 'x', intersect: false }
             }
         });
-        appStateRef.registerChart(canvasId, chart);
+        this.app.state.registerChart(canvasId, chart);
+    }
+
+    drawDetailCharts(snapshot) {
+        if (typeof Chart === 'undefined') return;
+        const priceCanvas = this.resetChartCanvas('largeChartCanvas');
+        const volumeCanvas = this.resetChartCanvas('volumeChartCanvas');
+        if (!priceCanvas || !volumeCanvas) return;
+
+        const bars = snapshot.bars;
+        const stats = summarizeBars(bars);
+        const labels = bars.map(d => d.date);
+        const useCombo = this.app.state.chartStyle !== 'line';
+        const colors = this.chartColors();
+
+        const trendFill = (context) => {
+            const { chart } = context;
+            const { ctx, chartArea } = chart;
+            if (!chartArea) return colors.fillTop;
+            return this.areaGradient(ctx, chartArea, colors.fillTop, colors.fillBottom);
+        };
+
+        const smaDatasets = [
+            {
+                type: 'line',
+                label: 'Trend line',
+                data: stats.sma20Series,
+                borderColor: colors.line,
+                borderWidth: 2.5,
+                pointRadius: 0,
+                fill: true,
+                spanGaps: true,
+                order: 0,
+                backgroundColor: trendFill
+            },
+            {
+                type: 'line',
+                label: 'SMA50',
+                data: stats.sma50Series,
+                borderColor: colors.muted,
+                borderWidth: 1.75,
+                borderDash: [5, 4],
+                pointRadius: 0,
+                fill: false,
+                spanGaps: true,
+                order: 0
+            }
+        ];
+
+        let datasets;
+        if (useCombo) {
+            const candleDatasets = this.candleDatasets(bars, colors);
+            const bodyThickness = bars.length > 120 ? 3 : bars.length > 50 ? 5 : 8;
+            candleDatasets[1].barThickness = bodyThickness;
+            candleDatasets[0].barThickness = Math.max(1, Math.round(bodyThickness / 6));
+            datasets = [...candleDatasets, ...smaDatasets];
+        } else {
+            const closes = bars.map(d => d.close);
+            const isUp = closes[closes.length - 1] >= closes[0];
+            datasets = [
+                {
+                    type: 'line',
+                    label: 'Close',
+                    data: closes,
+                    borderColor: isUp ? colors.closeUp : colors.closeDown,
+                    borderWidth: 2.5,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: true,
+                    tension: 0.15,
+                    order: 1,
+                    backgroundColor: (context) => {
+                        const { chart } = context;
+                        const { ctx, chartArea } = chart;
+                        if (!chartArea) return isUp ? colors.fillTopUp : colors.fillTopDown;
+                        return this.areaGradient(
+                            ctx,
+                            chartArea,
+                            isUp ? colors.fillTopUp : colors.fillTopDown,
+                            colors.fillBottom
+                        );
+                    }
+                },
+                {
+                    ...smaDatasets[0],
+                    fill: false,
+                    backgroundColor: 'transparent',
+                    borderWidth: 2
+                },
+                smaDatasets[1]
+            ];
+        }
+
+        const priceChart = new Chart(priceCanvas.getContext('2d'), {
+            type: useCombo ? 'bar' : 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                datasets: useCombo ? { bar: { grouped: false } } : {},
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            boxWidth: 12,
+                            font: { size: 10 },
+                            color: colors.muted,
+                            filter: (item) => ['Trend line', 'SMA50', 'Close'].includes(item.text)
+                        }
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        backgroundColor: colors.tipBg,
+                        titleColor: '#fff',
+                        bodyColor: '#f4f4f5',
+                        displayColors: false,
+                        filter: (item) => {
+                            const label = item.dataset.label;
+                            if (useCombo) return label === 'Candle' || label === 'Trend line' || label === 'SMA50';
+                            return label === 'Close' || label === 'Trend line' || label === 'SMA50';
+                        },
+                        callbacks: {
+                            label: (ctx) => {
+                                const i = ctx.dataIndex;
+                                if (ctx.dataset.label === 'Candle') {
+                                    const b = bars[i];
+                                    return this.beginnerCandleTip(b);
+                                }
+                                if (ctx.parsed.y == null) return '';
+                                return this.beginnerLineTip(ctx.dataset.label, ctx.parsed.y);
+                            },
+                            afterBody: (items) => {
+                                const i = items[0]?.dataIndex;
+                                const b = bars[i];
+                                if (!b) return [];
+                                return [
+                                    `O ₱${b.open.toFixed(2)}  H ₱${b.high.toFixed(2)}  L ₱${b.low.toFixed(2)}  C ₱${b.close.toFixed(2)}  V ${formatVolume(b.volume)}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: { display: false },
+                        stacked: false,
+                        ticks: { color: colors.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 }
+                    },
+                    y: {
+                        display: true,
+                        grid: { color: colors.grid },
+                        stacked: false,
+                        beginAtZero: false,
+                        ticks: { color: colors.muted }
+                    }
+                },
+                interaction: { mode: 'nearest', axis: 'x', intersect: false }
+            }
+        });
+        this.app.state.registerChart('largeChartCanvas', priceChart);
+
+        const volumeChart = new Chart(volumeCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data: bars.map(b => b.volume),
+                    backgroundColor: bars.map(b => b.close >= b.open
+                        ? `${colors.up}73`
+                        : `${colors.down}73`)
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: colors.tipBg,
+                        displayColors: false,
+                        callbacks: {
+                            label: (ctx) => {
+                                const b = bars[ctx.dataIndex];
+                                return `Volume ${formatVolume(b?.volume)}. How many shares changed hands that day.`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { display: false },
+                    y: { display: false }
+                }
+            }
+        });
+        this.app.state.registerChart('volumeChartCanvas', volumeChart);
+    }
+
+    candleDatasets(bars, colors = this.chartColors()) {
+        const palette = bars.map(b => b.close >= b.open ? colors.up : colors.down);
+        return [
+            {
+                type: 'bar',
+                label: 'Wick',
+                data: bars.map(b => this.wickRange(b)),
+                backgroundColor: palette,
+                borderWidth: 0,
+                order: 3
+            },
+            {
+                type: 'bar',
+                label: 'Candle',
+                data: bars.map(b => this.bodyRange(b)),
+                backgroundColor: palette,
+                borderWidth: 0,
+                order: 2
+            }
+        ];
+    }
+
+    wickRange(bar) {
+        if (bar.high === bar.low) {
+            const pad = Math.max(bar.close * 0.001, 0.01);
+            return [bar.low - pad, bar.high + pad];
+        }
+        return [bar.low, bar.high];
+    }
+
+    bodyRange(bar) {
+        let lo = Math.min(bar.open, bar.close);
+        let hi = Math.max(bar.open, bar.close);
+        if (hi === lo) {
+            const pad = Math.max((bar.high - bar.low) * 0.12, bar.close * 0.0008, 0.01);
+            return [lo - pad, hi + pad];
+        }
+        return [lo, hi];
+    }
+
+    renderIndicators(stats) {
+        const atrPct = stats.atr && stats.latestClose
+            ? ` (${((stats.atr / stats.latestClose) * 100).toFixed(1)}%)`
+            : '';
+        const cells = [
+            {
+                label: 'RSI 14',
+                value: stats.rsi == null ? '—' : `${stats.rsi} ${stats.rsiLabel}`,
+                tip: this.rsiTip(stats)
+            },
+            {
+                label: 'Trend vs SMA',
+                value: stats.smaBias,
+                tip: this.smaTip(stats)
+            },
+            {
+                label: 'ATR 14',
+                value: stats.atr == null ? 'Need more bars' : `₱${stats.atr.toFixed(2)}${atrPct}`,
+                tip: this.atrTip(stats)
+            },
+            {
+                label: 'Range S/R',
+                value: stats.support == null ? '—' : `₱${stats.support.toFixed(2)} · ₱${stats.resistance.toFixed(2)}`,
+                tip: this.srTip(stats)
+            }
+        ];
+        this.els.indicatorRow.innerHTML = cells.map((c, i) => `
+            <div class="stat-card bg-white border border-zinc-200 rounded-lg p-3 cursor-help" tabindex="0">
+                <p class="stat-tip ${i >= 2 ? 'stat-tip-end' : ''}">${escapeHtml(c.tip)}</p>
+                <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">${c.label}</p>
+                <p class="text-xs font-medium text-zinc-800">${escapeHtml(c.value)}</p>
+            </div>
+        `).join('');
+    }
+
+    rsiTip(stats) {
+        if (stats.rsi == null) {
+            return 'RSI shows whether recent days leaned more toward buying or selling. Need more history first.';
+        }
+        const n = stats.rsi;
+        if (n >= 70) return `RSI is ${n}. Recent buying looks strong, which can mean the stock is stretched upward.`;
+        if (n <= 30) return `RSI is ${n}. Recent selling looks heavy, which can mean the stock is stretched downward.`;
+        return `RSI is ${n}. Recent trading sits in a middle zone, not clearly stretched either way.`;
+    }
+
+    smaTip(stats) {
+        if (stats.sma20 == null) {
+            return 'SMA20 is the average close over the last 20 days. Try the 1M range to see it.';
+        }
+        if (stats.latestClose >= stats.sma20) {
+            return 'Price is above its 20-day average, so recent closes have been stronger than that typical level.';
+        }
+        return 'Price is below its 20-day average, so recent closes have been weaker than that typical level.';
+    }
+
+    atrTip(stats) {
+        if (stats.atr == null) {
+            return 'ATR measures the usual daily price swing. Try a longer range like 1M.';
+        }
+        const pct = stats.latestClose ? ((stats.atr / stats.latestClose) * 100).toFixed(1) : null;
+        const pctBit = pct ? ` About ${pct}% of the last close.` : '';
+        return `ATR is about ₱${stats.atr.toFixed(2)}.${pctBit} A higher number means a bumpier stock.`;
+    }
+
+    srTip(stats) {
+        if (stats.support == null) {
+            return 'Support and resistance are the lowest and highest prices in this chart window.';
+        }
+        return `₱${stats.support.toFixed(2)} is the recent low and ₱${stats.resistance.toFixed(2)} is the recent high in this window. They often act like a soft floor and ceiling.`;
     }
 
     showDashboard() {
+        this.app.state.currentView = 'dashboard';
         this.els.detailView.classList.add('hidden');
+        this.els.journalView.classList.add('hidden');
         this.els.dashboardView.classList.remove('hidden');
+        this.setNav('dashboard');
+        this.renderDashboard();
     }
 
-    showDetails(stock, data) {
-        const latestPrice = data[data.length - 1].price;
+    showJournal() {
+        this.app.state.currentView = 'journal';
+        this.els.detailView.classList.add('hidden');
+        this.els.dashboardView.classList.add('hidden');
+        this.els.journalView.classList.remove('hidden');
+        this.setNav('journal');
+        this.renderJournal();
+    }
+
+    showDetailsLoading(stock) {
+        this.app.state.currentView = 'detail';
+        this.els.dashboardView.classList.add('hidden');
+        this.els.journalView.classList.add('hidden');
+        this.els.detailView.classList.remove('hidden');
+        this.setNav('dashboard');
         this.els.detailName.textContent = stock.name;
         this.els.detailTicker.textContent = `PSE:${stock.ticker}`;
-        this.els.detailPrice.textContent = `₱${latestPrice.toFixed(2)}`;
+        this.els.detailDataMeta.textContent = 'Loading series…';
+        this.syncRangeButtons();
+    }
+
+    showDetails(stock, snapshot, { soft = false } = {}) {
+        const stats = summarizeBars(snapshot.bars);
+        this.els.detailName.textContent = stock.name;
+        this.els.detailTicker.textContent = `PSE:${stock.ticker}`;
+        this.els.detailPrice.textContent = `₱${stats.latestClose.toFixed(2)}`;
+        const up = stats.pctChange >= 0;
+        this.els.detailPctChange.textContent = `${up ? '+' : ''}${stats.pctChange.toFixed(2)}%`;
+        this.els.detailPctChange.className = `text-sm font-semibold mt-1 ${up ? 'text-emerald-600' : 'text-red-600'}`;
+        this.els.detailDataMeta.textContent =
+            `${snapshot.source === 'live' ? 'Live Yahoo/PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
+
+        const purchase = this.formatPurchaseLine(stats.purchase);
+        if (this.els.detailPurchaseAmount) this.els.detailPurchaseAmount.textContent = purchase.amount;
+        if (this.els.detailPurchaseMeta) this.els.detailPurchaseMeta.textContent = purchase.meta;
 
         this.els.dashboardView.classList.add('hidden');
+        this.els.journalView.classList.add('hidden');
         this.els.detailView.classList.remove('hidden');
+        this.syncRangeButtons();
+        this.syncChartStyleButtons();
+        this.renderIndicators(stats);
+        this.drawDetailCharts(snapshot);
+        if (!soft) this.renderDetailJournal(stock.ticker);
 
-        // Reset AI Panel state
+        const simulated = snapshot.source === 'simulated';
+        this.els.aiSimBanner.classList.toggle('hidden', !simulated);
+        this.els.runAIBtn.textContent = simulated ? 'Run analysis anyway' : 'Run Market Analysis';
+
+        if (soft) return;
+
+        const cacheKey = this.app.state.aiCacheKey(stock.ticker, this.app.state.activeRange, snapshot);
+        const cached = this.app.state.getAiCache(cacheKey);
+        if (cached) {
+            this.setAIResults(cached.data, cached.at, snapshot.source);
+        } else {
+            this.resetAIPanel();
+        }
+    }
+
+    rangeLabel(id) {
+        return CONFIG.ranges.find(r => r.id === id)?.label || id;
+    }
+
+    resetAIPanel() {
         this.els.aiInputState.classList.remove('hidden');
         this.els.aiResultsState.classList.add('hidden');
         this.els.aiLoadingState.classList.add('hidden');
         this.els.aiErrorState.classList.add('hidden');
-        // Removed apiKeyError reset
-
-        this.drawChart('largeChartCanvas', data, false, this.app.state);
+        this.els.runAIBtn.disabled = false;
     }
 
     setAILoading() {
         this.els.aiInputState.classList.add('hidden');
         this.els.aiLoadingState.classList.remove('hidden');
         this.els.aiErrorState.classList.add('hidden');
+        this.els.aiResultsState.classList.add('hidden');
         this.els.runAIBtn.disabled = true;
     }
 
-    setAIResults(aiData) {
+    setAIResults(aiData, at, source) {
         this.els.outTrend.textContent = aiData.trend;
         this.els.outRationale.textContent = aiData.rationale;
-        
+        this.els.aiAsOf.textContent = `As of ${formatFetchedAt(at)}${source === 'simulated' ? ' · simulated prices' : ''}`;
+
         const action = String(aiData.action).toUpperCase();
         this.els.outAction.textContent = action;
-        this.els.outAction.className = "text-sm font-bold tracking-widest uppercase"; 
-        if(action.includes('BUY')) this.els.outAction.classList.add('text-emerald-600');
-        else if(action.includes('SELL')) this.els.outAction.classList.add('text-red-600');
+        this.els.outAction.className = 'text-sm font-bold tracking-widest uppercase';
+        if (action.includes('BUY')) this.els.outAction.classList.add('text-emerald-600');
+        else if (action.includes('SELL')) this.els.outAction.classList.add('text-red-600');
         else this.els.outAction.classList.add('text-zinc-500');
 
         this.els.aiLoadingState.classList.add('hidden');
+        this.els.aiInputState.classList.add('hidden');
+        this.els.aiErrorState.classList.add('hidden');
         this.els.aiResultsState.classList.remove('hidden');
         this.els.runAIBtn.disabled = false;
     }
@@ -211,5 +931,44 @@ export class UIController {
         this.els.aiLoadingState.classList.add('hidden');
         this.els.aiErrorState.classList.remove('hidden');
         this.els.runAIBtn.disabled = false;
+    }
+
+    journalCardHtml(entry) {
+        const ai = entry.aiSnapshot
+            ? `<p class="mt-2 text-[11px] text-zinc-500"><span class="font-semibold">${escapeHtml(String(entry.aiSnapshot.action || ''))}</span> · ${escapeHtml(entry.aiSnapshot.rationale || '')}</p>`
+            : '';
+        return `
+            <div class="border border-zinc-200 rounded-lg p-4 bg-white">
+                <div class="flex justify-between items-start gap-3">
+                    <div>
+                        <p class="text-sm font-semibold text-zinc-900">${escapeHtml(entry.ticker)} · ${escapeHtml(entry.date)}</p>
+                        <p class="text-xs text-zinc-600 mt-2">${escapeHtml(entry.thesis || '—')}</p>
+                        <p class="text-[11px] text-zinc-500 mt-1">Invalidation: ${escapeHtml(entry.invalidation || '—')}</p>
+                        ${ai}
+                    </div>
+                    <div class="flex flex-col items-end gap-2">
+                        <select data-journal-outcome="${escapeHtml(entry.id)}" class="text-[11px] border border-zinc-200 rounded px-2 py-1">
+                            ${['open', 'win', 'loss', 'scratch'].map(o =>
+                                `<option value="${o}" ${entry.outcome === o ? 'selected' : ''}>${o}</option>`
+                            ).join('')}
+                        </select>
+                        <button type="button" data-journal-delete="${escapeHtml(entry.id)}" class="text-[11px] text-zinc-400 hover:text-red-600">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderJournal() {
+        const entries = this.app.state.journal;
+        this.els.journalEmpty.classList.toggle('hidden', entries.length > 0);
+        this.els.journalList.innerHTML = entries.map(e => this.journalCardHtml(e)).join('');
+    }
+
+    renderDetailJournal(ticker) {
+        const entries = this.app.state.journalFor(ticker);
+        this.els.detailJournalList.innerHTML = entries.length
+            ? entries.map(e => this.journalCardHtml(e)).join('')
+            : '<p class="text-xs text-zinc-400">No entries for this ticker yet.</p>';
     }
 }

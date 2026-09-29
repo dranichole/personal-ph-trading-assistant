@@ -1,37 +1,31 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="day">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Personal Trading Assistant | Quantitative Analysis</title>
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('ta_theme_v1');
+                if (t === 'night' || t === 'day') document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {}
+        })();
+    </script>
     
-    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Chart.js for data visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Link external custom CSS -->
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css">
 
-    <!-- Tailwind Configuration -->
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Inter', 'sans-serif'] },
-                    colors: {
-                        brand: {
-                            50: '#f4f4f5', 100: '#e4e4e7', 200: '#d4d4d8', 300: '#a1a1aa',
-                            400: '#71717a', 500: '#52525b', 600: '#3f3f46', 700: '#27272a',
-                            800: '#18181b', 900: '#09090b',
-                        }
-                    }
+                    fontFamily: { sans: ['DM Sans', 'Inter', 'sans-serif'] }
                 }
             }
         }
@@ -40,98 +34,148 @@
 <body class="bg-zinc-50 text-zinc-900 font-sans antialiased min-h-screen flex flex-col">
     
     <header class="bg-white border-b border-zinc-200 sticky top-0 z-10 shadow-sm">
-        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
             <div>
-                <comment-tag data-type="replacement" data-original="<h1 class=&quot;text-xl font-bold tracking-tight text-zinc-900&quot;>TradeMate</h1>"><h1 class="text-xl font-bold tracking-tight text-zinc-900">Personal Trading Assistant</h1></comment-tag>
+                <h1 class="text-xl font-bold tracking-tight text-zinc-900"><span class="brand-mark"></span>Personal Trading Assistant</h1>
                 <p class="text-[10px] text-zinc-500 font-semibold tracking-widest uppercase mt-0.5">Quantitative Analysis</p>
             </div>
-            <div class="text-sm font-medium text-zinc-500" id="currentDate"></div>
+            <div class="flex items-center gap-3 sm:gap-4 flex-wrap justify-end">
+                <button type="button" id="themeToggle" class="theme-toggle-btn" aria-label="Switch to night mode" title="Toggle day / night">
+                    <svg data-icon="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4"></circle>
+                        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+                    </svg>
+                </button>
+                <nav class="flex text-xs font-semibold uppercase tracking-wide gap-1">
+                    <button id="navDashboard" class="nav-pill px-3 py-1.5 rounded-full active">Watchlist</button>
+                    <button id="navJournal" class="nav-pill px-3 py-1.5 rounded-full">Journal</button>
+                </nav>
+                <div class="text-right">
+                    <div class="text-sm font-medium text-zinc-500" id="currentDate"></div>
+                    <p id="lastRefreshLabel" class="text-[10px] text-zinc-500 mt-0.5">Prices update automatically</p>
+                </div>
+            </div>
         </div>
     </header>
 
     <main class="flex-grow max-w-7xl mx-auto px-6 py-8 w-full relative">
         
-        <!-- ================= DASHBOARD VIEW ================= -->
         <section id="dashboardView" class="fade-in">
-            <div class="mb-6 flex justify-between items-end">
+            <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-end">
                 <div>
-                    <h2 class="text-lg font-semibold text-zinc-900">Philippine Blue Chips</h2>
-                    <p class="text-sm text-zinc-500 mt-1">1-Month Historical Performance</p>
+                    <h2 class="text-lg font-semibold text-zinc-900">Philippine Blue Chip Company Stocks</h2>
+                    <p class="text-sm text-zinc-500 mt-1">1-month performance</p>
+                    <p class="text-xs text-zinc-500 mt-2 max-w-xl">Last close is the stock’s ending market price for the latest trading day.</p>
+                </div>
+                <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <form id="addTickerForm" class="flex gap-2">
+                        <input id="addTickerInput" type="text" maxlength="10" placeholder="Ticker (e.g. TEL)"
+                            class="w-36 px-3 py-2 text-xs border border-zinc-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 uppercase">
+                        <button type="submit" class="px-3 py-2 btn-solid text-xs font-semibold uppercase tracking-wide rounded hover:opacity-90">Add</button>
+                    </form>
+                    <select id="sectorFilter" class="px-3 py-2 text-xs border border-zinc-200 rounded bg-white">
+                        <option value="all">All sectors</option>
+                    </select>
+                    <select id="sortSelect" class="px-3 py-2 text-xs border border-zinc-200 rounded bg-white">
+                        <option value="watchlist">Watchlist order</option>
+                        <option value="change">% change</option>
+                        <option value="name">Name</option>
+                        <option value="sector">Sector</option>
+                    </select>
                 </div>
             </div>
+            <p id="watchlistMessage" class="hidden mb-4 text-xs text-zinc-500"></p>
             
-            <div id="stockGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <!-- Cards injected here via UIController in js/ui.js -->
-            </div>
+            <div id="stockGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+            <p id="emptyWatchlist" class="hidden text-sm text-zinc-500">No names on the watchlist. Add a PSE ticker above.</p>
         </section>
 
-        <!-- ================= DETAIL VIEW ================= -->
         <section id="detailView" class="hidden fade-in">
-            <!-- Navigation -->
             <div class="mb-6 flex items-center justify-between">
                 <button id="backBtn" class="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors focus:outline-none">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
                     Back to Dashboard
                 </button>
+                <div id="rangeButtons" class="flex gap-1 bg-zinc-100 p-1 rounded"></div>
             </div>
             
-            <div class="mb-6 flex justify-between items-end">
+            <div class="mb-6 flex justify-between items-end gap-4">
                 <div>
                     <h2 id="detailStockName" class="text-2xl font-bold text-zinc-900">--</h2>
                     <p id="detailStockTicker" class="text-sm font-medium text-zinc-500 uppercase tracking-wide mt-1">--</p>
+                    <p id="detailDataMeta" class="text-xs text-zinc-500 mt-2">--</p>
                 </div>
-                <div class="text-right">
-                    <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold">Latest Price</p>
+                <div class="text-right max-w-xs">
+                    <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold">Last close</p>
                     <p id="detailLatestPrice" class="text-2xl font-bold text-zinc-900">--</p>
+                    <p id="detailPctChange" class="text-sm font-semibold mt-1">--</p>
+                    <p class="text-[11px] text-zinc-500 mt-1 leading-snug">The ending market price for the latest trading day.</p>
+                    <div id="detailPurchaseBox" class="mt-3 text-left bg-zinc-50 border border-zinc-200 rounded-lg p-3">
+                        <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Starter buy idea</p>
+                        <p id="detailPurchaseAmount" class="text-sm font-semibold text-zinc-900">--</p>
+                        <p id="detailPurchaseMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">--</p>
+                    </div>
                 </div>
             </div>
 
-            <!-- Two Column Layout -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                
-                <!-- Left: Chart -->
-                <div class="lg:col-span-2 bg-white border border-zinc-200 rounded-lg shadow-sm p-5 flex flex-col min-h-[400px]">
-                    <div class="mb-4">
-                        <h3 class="text-sm font-semibold text-zinc-900">1-Month Price Action</h3>
+                <div class="lg:col-span-2 space-y-4">
+                    <div class="bg-white border border-zinc-200 rounded-lg shadow-sm p-5 flex flex-col min-h-[360px] chart-shell">
+                        <div class="mb-3 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                            <div>
+                                <h3 class="text-sm font-semibold text-zinc-900">Price action + trend line</h3>
+                                <p id="candleHelp" class="text-[11px] text-zinc-500 mt-1 max-w-lg">Candles show each day’s open, high, low, and close. The smooth line is the recent average with a soft fade underneath.</p>
+                            </div>
+                            <div id="chartStyleButtons" class="flex gap-1 bg-zinc-100 p-1 rounded shrink-0">
+                                <button type="button" data-chart-style="combo" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded bg-white text-zinc-900 shadow-sm">Candles</button>
+                                <button type="button" data-chart-style="line" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded text-zinc-500">Line</button>
+                            </div>
+                        </div>
+                        <div id="chartPanel" class="relative">
+                            <div id="chartLoadingOverlay" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 rounded">
+                                <div class="loader mb-2"></div>
+                                <p id="chartLoadingText" class="text-xs font-medium text-zinc-600">Updating chart…</p>
+                            </div>
+                            <div class="relative w-full min-h-[280px]">
+                                <canvas id="largeChartCanvas"></canvas>
+                            </div>
+                            <div class="h-24 mt-4 relative w-full">
+                                <canvas id="volumeChartCanvas"></canvas>
+                            </div>
+                        </div>
                     </div>
-                    <div class="flex-grow relative w-full">
-                        <canvas id="largeChartCanvas"></canvas>
-                    </div>
+                    <div id="indicatorRow" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
                 </div>
 
-                <!-- Right: AI Analysis -->
                 <div class="bg-white border border-zinc-200 rounded-lg shadow-sm flex flex-col h-full">
                     <div class="px-5 py-4 border-b border-zinc-100 bg-zinc-50/50">
                         <h3 class="text-sm font-semibold text-zinc-900">AI Mentor Analysis</h3>
-                        <p class="text-xs text-zinc-500 mt-1">Automated quant analysis grounded in live web search data.</p>
+                        <p class="text-xs text-zinc-500 mt-1">Uses your chart stats. Educational only, not advice.</p>
                     </div>
                     
                     <div class="p-5 flex-grow flex flex-col">
-                        
-                        <!-- Input State -->
+                        <div id="aiSimBanner" class="hidden mb-3 p-2 bg-amber-50 border border-amber-100 rounded text-[11px] text-amber-800">
+                            Chart is simulated fallback data. Analysis will treat it as untrustworthy.
+                        </div>
                         <div id="aiInputState" class="space-y-4">
-                            <div>
-                                <p class="text-xs text-zinc-600 mb-3">Click below to generate a real-time, AI-driven quantitative analysis grounded in recent web search data.</p>
-                            </div>
-                            <button id="runAIBtn" class="w-full flex justify-center items-center py-2.5 bg-zinc-900 text-white text-xs font-semibold tracking-wide uppercase rounded hover:bg-zinc-800 transition-colors focus:outline-none disabled:opacity-50">
+                            <p class="text-xs text-zinc-600 mb-3">Generate a call grounded in SMA, RSI, ATR, and the selected range.</p>
+                            <button id="runAIBtn" class="w-full flex justify-center items-center py-2.5 btn-long text-xs font-semibold tracking-wide uppercase rounded hover:opacity-90 transition-opacity focus:outline-none disabled:opacity-50">
                                 Run Market Analysis
                             </button>
                         </div>
 
-                        <!-- Loading State -->
                         <div id="aiLoadingState" class="hidden flex-grow flex flex-col items-center justify-center space-y-3 py-8">
                             <div class="loader"></div>
-                            <span class="text-xs font-medium text-zinc-500">Searching web and analyzing...</span>
+                            <span class="text-xs font-medium text-zinc-500">Analyzing indicators…</span>
                         </div>
 
-                        <!-- Error State -->
                         <div id="aiErrorState" class="hidden mt-4 p-3 bg-red-50 border border-red-100 rounded text-center">
                             <p id="aiErrorText" class="text-xs text-red-600 font-medium">Error occurred.</p>
                             <button id="retryAIBtn" class="mt-2 text-xs text-zinc-600 underline hover:text-zinc-900">Try Again</button>
                         </div>
 
-                        <!-- Results State -->
                         <div id="aiResultsState" class="hidden flex-col h-full fade-in mt-4 border-t border-zinc-100 pt-4">
+                            <p id="aiAsOf" class="text-[10px] text-zinc-400 mb-3"></p>
                             <div class="grid grid-cols-2 gap-3 mb-4">
                                 <div class="bg-zinc-50 p-3 rounded border border-zinc-100 text-center">
                                     <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Market Trend</p>
@@ -145,19 +189,60 @@
                             
                             <div class="flex-grow">
                                 <h4 class="text-[10px] font-bold text-zinc-900 uppercase tracking-widest mb-2">Mentor Rationale</h4>
-                                <p id="outRationale" class="text-xs text-zinc-600 leading-relaxed text-justify">
-                                    --
-                                </p>
+                                <p id="outRationale" class="text-xs text-zinc-600 leading-relaxed text-justify">--</p>
                             </div>
+                            <p class="mt-4 text-[10px] text-zinc-400">Educational journal aid only. Not a recommendation to buy or sell.</p>
                         </div>
-                        
                     </div>
                 </div>
             </div>
+
+            <div class="mt-8 bg-white border border-zinc-200 rounded-lg shadow-sm p-5">
+                <h3 class="text-sm font-semibold text-zinc-900 mb-1">Journal this name</h3>
+                <p class="text-xs text-zinc-500 mb-4">Private to this browser only. Other visitors on the live site never see your notes.</p>
+                <form id="detailJournalForm" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+                    <input type="date" id="detailJournalDate" class="px-3 py-2 text-xs border border-zinc-200 rounded">
+                    <select id="detailJournalOutcome" class="px-3 py-2 text-xs border border-zinc-200 rounded">
+                        <option value="open">Open</option>
+                        <option value="win">Win</option>
+                        <option value="loss">Loss</option>
+                        <option value="scratch">Scratch</option>
+                    </select>
+                    <textarea id="detailJournalThesis" rows="2" placeholder="Thesis" class="md:col-span-2 px-3 py-2 text-xs border border-zinc-200 rounded"></textarea>
+                    <input id="detailJournalInvalidation" type="text" placeholder="Invalidation (price or event)" class="px-3 py-2 text-xs border border-zinc-200 rounded">
+                    <label class="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" id="detailJournalAttachAi" class="rounded border-zinc-300">
+                        Attach latest AI note
+                    </label>
+                    <button type="submit" class="md:col-span-2 py-2 btn-long text-xs font-semibold uppercase tracking-wide rounded hover:opacity-90">Save entry</button>
+                </form>
+                <div id="detailJournalList" class="space-y-3"></div>
+            </div>
+        </section>
+
+        <section id="journalView" class="hidden fade-in">
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold text-zinc-900">Trade journal</h2>
+                <p class="text-sm text-zinc-500 mt-1">Saved in your browser’s local storage, not on the server. Each visitor gets their own private journal on this device. Clearing site data or using another browser starts fresh.</p>
+            </div>
+            <form id="journalForm" class="bg-white border border-zinc-200 rounded-lg p-5 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input id="journalTicker" type="text" placeholder="Ticker" maxlength="10" class="px-3 py-2 text-xs border border-zinc-200 rounded uppercase">
+                <input type="date" id="journalDate" class="px-3 py-2 text-xs border border-zinc-200 rounded">
+                <textarea id="journalThesis" rows="2" placeholder="Thesis" class="md:col-span-2 px-3 py-2 text-xs border border-zinc-200 rounded"></textarea>
+                <input id="journalInvalidation" type="text" placeholder="Invalidation" class="px-3 py-2 text-xs border border-zinc-200 rounded">
+                <select id="journalOutcome" class="px-3 py-2 text-xs border border-zinc-200 rounded">
+                    <option value="open">Open</option>
+                    <option value="win">Win</option>
+                    <option value="loss">Loss</option>
+                    <option value="scratch">Scratch</option>
+                </select>
+                <button type="submit" class="md:col-span-2 py-2 btn-long text-xs font-semibold uppercase tracking-wide rounded hover:opacity-90">Add entry</button>
+            </form>
+            <div id="journalList" class="space-y-3"></div>
+            <p id="journalEmpty" class="hidden text-sm text-zinc-500">No journal entries yet.</p>
         </section>
     </main>
 
-    <!-- Link the main JS file as a module -->
     <script type="module" src="js/app.js"></script>
 </body>
 </html>
