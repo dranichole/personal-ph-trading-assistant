@@ -59,33 +59,16 @@ export class DataService {
 }
 
 export class AIService {
-    static async analyze(apiKey, stockName, ticker, historicalData, latestPrice) {
-        const prompt = `You are an expert financial mentor. Analyze ${stockName} (PSE:${ticker}).
-        Historical 30-day closing prices: [${historicalData.join(', ')}].
-        Latest known price from technicals: PHP ${latestPrice}.
-        
-        Search the web for the LATEST news and current price of this Philippine stock to ground your analysis.
-        
-        Respond strictly with a JSON object matching this schema:
-        {
-            "price": "String. The current price you found via search, or fallback to the technical price if not found.",
-            "trend": "String. One word: Bullish, Bearish, or Neutral.",
-            "action": "String. One word: Buy, Sell, or Hold.",
-            "rationale": "String. A 2-sentence beginner-friendly explanation combining the recent news and the mathematical price trend."
-        }`;
-
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+    static async analyze(stockName, ticker, historicalData, latestPrice) {
+        // We no longer pass the API key from the frontend!
+        // Instead, we call our own secure Vercel backend route.
+        const response = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                tools: [{ google_search: {} }], // Enable Search Grounding
-                generationConfig: { responseMimeType: "application/json" }
-            })
+            body: JSON.stringify({ stockName, ticker, historicalData, latestPrice })
         });
 
         if (!response.ok) throw new Error(`API Error: ${response.status}`);
-        const result = await response.json();
-        return JSON.parse(result.candidates[0].content.parts[0].text);
+        return await response.json();
     }
 }

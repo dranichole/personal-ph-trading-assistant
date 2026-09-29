@@ -19,8 +19,7 @@ export class UIController {
             detailName: document.getElementById('detailStockName'),
             detailTicker: document.getElementById('detailStockTicker'),
             detailPrice: document.getElementById('detailLatestPrice'),
-            apiKeyInput: document.getElementById('apiKeyInput'),
-            apiKeyError: document.getElementById('apiKeyError'),
+            // Removed apiKeyInput and apiKeyError
             runAIBtn: document.getElementById('runAIBtn'),
             retryAIBtn: document.getElementById('retryAIBtn'),
             aiInputState: document.getElementById('aiInputState'),
@@ -50,10 +49,7 @@ export class UIController {
             this.els.aiInputState.classList.remove('hidden');
         });
         
-        // Clear error when typing
-        this.els.apiKeyInput.addEventListener('input', () => {
-            this.els.apiKeyError.classList.add('hidden');
-        });
+        // Removed apiKeyInput event listener
     }
 
     createDashboardCards() {
@@ -182,7 +178,7 @@ export class UIController {
         this.els.aiResultsState.classList.add('hidden');
         this.els.aiLoadingState.classList.add('hidden');
         this.els.aiErrorState.classList.add('hidden');
-        this.els.apiKeyError.classList.add('hidden');
+        // Removed apiKeyError reset
 
         this.drawChart('largeChartCanvas', data, false, this.app.state);
     }

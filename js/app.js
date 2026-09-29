@@ -42,12 +42,8 @@ class TradingAssistantApp {
     }
 
     async handleAIAnalysis() {
-        const apiKey = this.ui.els.apiKeyInput.value.trim();
-        if (!apiKey) {
-            this.ui.els.apiKeyError.classList.remove('hidden');
-            return;
-        }
-
+        // Removed API key check logic. We now rely on the secure backend.
+        
         const stock = this.state.activeStock;
         const data = this.state.getStockData(stock.ticker);
         const prices = data.map(d => d.price);
@@ -56,11 +52,12 @@ class TradingAssistantApp {
         this.ui.setAILoading();
 
         try {
-            const aiData = await AIService.analyze(apiKey, stock.name, stock.ticker, prices, latestPrice);
+            // Call AIService without passing an API key
+            const aiData = await AIService.analyze(stock.name, stock.ticker, prices, latestPrice);
             this.ui.setAIResults(aiData);
         } catch (error) {
             console.error("AI Analysis Error:", error);
-            this.ui.setAIError("Failed to fetch analysis. Please check your API key and network connection.");
+            this.ui.setAIError("Failed to fetch analysis. Please try again later.");
         }
     }
 }
