@@ -111,6 +111,110 @@ header.sticky {
     border-radius: 1rem !important;
 }
 
+/* Distinct watchlist bands — borders use existing theme tokens only */
+#dashboardSections {
+    display: flex;
+    flex-direction: column;
+    gap: 2.75rem;
+}
+
+.watchlist-section {
+    padding: 1.25rem 1.25rem 1.5rem;
+    border: 1px solid var(--line);
+    border-radius: 1.25rem;
+    background: var(--card);
+    box-shadow: var(--shadow);
+}
+
+.watchlist-section--bluechip {
+    border-top: 3px solid var(--chart-line);
+}
+
+.watchlist-section--lowcost {
+    border-top: 3px solid var(--accent-2);
+}
+
+.watchlist-section--other {
+    border-top: 3px solid var(--accent);
+}
+
+.watchlist-section__head {
+    margin-bottom: 1.15rem;
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.watchlist-section__eyebrow {
+    margin: 0 0 0.35rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+}
+
+.watchlist-section__title {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--ink);
+    line-height: 1.25;
+}
+
+.watchlist-section__blurb {
+    margin: 0.4rem 0 0;
+    max-width: 42rem;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: var(--muted);
+}
+
+#alertBar {
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+}
+
+#alertBar.is-empty .alert-dismiss-only {
+    display: none;
+}
+
+.alert-test-toast {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 60;
+    max-width: 22rem;
+    padding: 0.9rem 1rem;
+    border-radius: 0.85rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+    animation: fadeIn 0.25s ease;
+}
+
+.alert-test-toast__title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin: 0 0 0.35rem;
+}
+
+.alert-test-toast__body {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--muted);
+}
+
+.forecast-box input[type="number"] {
+    background: var(--card);
+    color: var(--ink);
+    border: 1px solid var(--line);
+}
+
 .fade-in { animation: fadeIn 0.3s ease-in-out; }
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(5px); }
@@ -171,9 +275,6 @@ header.sticky {
 .refresh-btn:disabled {
     opacity: 0.45;
     cursor: wait;
-}
-#alertBar {
-    background: color-mix(in srgb, var(--card) 92%, var(--accent-2));
 }
 .alert-item-buy {
     color: var(--up);

@@ -3,7 +3,21 @@
  * STATE MANAGEMENT LAYER
  * ==========================================
  */
-import { CONFIG } from './config.js';
+import { CONFIG, BLUECHIP_STOCKS, INCOME_SEED_STOCKS } from './config.js';
+
+const BLUECHIP_TICKERS = new Set(BLUECHIP_STOCKS.map(s => s.ticker));
+const LOWCOST_TICKERS = new Set(INCOME_SEED_STOCKS.map(s => s.ticker));
+
+function inferGroup(stock) {
+    const ticker = String(stock.ticker || '').toUpperCase();
+    if (stock.group === 'bluechip' || stock.group === 'lowcost' || stock.group === 'other') {
+        return stock.group;
+    }
+    if (stock.preIpo || ticker === 'GCASH') return 'other';
+    if (BLUECHIP_TICKERS.has(ticker)) return 'bluechip';
+    if (LOWCOST_TICKERS.has(ticker) || stock.autoAdd) return 'lowcost';
+    return 'other';
+}
 
 function readJson(key, fallback) {
     try {
@@ -72,12 +86,44 @@ export class AppState {
         let list = Array.isArray(stored)
             ? stored.map(s => ({ ...s }))
             : CONFIG.defaultStocks.map(s => ({ ...s }));
+
+        // Keep GCash Pre-IPO card present and up to date.
         const gcash = CONFIG.defaultStocks.find(s => s.ticker === 'GCASH');
         if (gcash && !list.some(s => s.ticker === 'GCASH')) {
             list.push({ ...gcash });
         } else if (gcash) {
             list = list.map(s => (s.ticker === 'GCASH' ? { ...s, ...gcash } : s));
         }
+
+        // Offer curated income / under-₱10 seeds once per seed version (removals stick).
+        const seedKey = CONFIG.storageKeys.incomeSeedVersion;
+        const appliedVer = Number(localStorage.getItem(seedKey) || 0);
+        const targetVer = Number(CONFIG.incomeSeedVersion || 0);
+        if (appliedVer < targetVer) {
+            const seeds = CONFIG.incomeSeedStocks || [];
+            for (const seed of seeds) {
+                if (!list.some(s => s.ticker === seed.ticker)) {
+                    list.push({
+                        ticker: seed.ticker,
+                        name: seed.name,
+                        sector: seed.sector,
+                        group: seed.group || 'lowcost',
+                        autoAdd: true
+                    });
+                }
+            }
+            localStorage.setItem(seedKey, String(targetVer));
+        }
+
+        // Ensure blue-chip defaults are never wiped by an empty/corrupt stored list.
+        for (const chip of CONFIG.bluechipStocks || []) {
+            if (!list.some(s => s.ticker === chip.ticker)) {
+                list.push({ ...chip });
+            }
+        }
+
+        list = list.map(s => ({ ...s, ticker: String(s.ticker || '').toUpperCase(), group: inferGroup(s) }));
+        writeJson(CONFIG.storageKeys.watchlist, list);
         return list;
     }
 
@@ -96,6 +142,7 @@ export class AppState {
             ticker,
             name: stock.name || ticker,
             sector: stock.sector || 'Custom',
+            group: stock.group || inferGroup({ ...stock, ticker }),
             preIpo: Boolean(stock.preIpo),
             locked: Boolean(stock.locked)
         });
@@ -143,6 +190,15 @@ export class AppState {
             list.sort((a, b) => a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name));
         }
         return list;
+    }
+
+    /** Visible stocks grouped for dashboard sections (empty sections omitted by UI). */
+    visibleStocksBySection() {
+        const visible = this.visibleStocks();
+        return (CONFIG.watchlistSections || []).map(section => ({
+            ...section,
+            stocks: visible.filter(s => (s.group || 'other') === section.id)
+        }));
     }
 
     sectors() {

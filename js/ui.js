@@ -3,8 +3,22 @@
  * UI CONTROLLER LAYER
  * ==========================================
  */
-import { CONFIG } from './config.js';
-import { summarizeBars } from './indicators.js';
+import { CONFIG, BLUECHIP_STOCKS, INCOME_SEED_STOCKS, WATCHLIST_SECTIONS } from './config.js';
+import { summarizeBars, forecastInvestment } from './indicators.js';
+
+const BLUECHIP_TICKERS = new Set(BLUECHIP_STOCKS.map(s => s.ticker));
+const LOWCOST_TICKERS = new Set(INCOME_SEED_STOCKS.map(s => s.ticker));
+
+function stockGroup(stock) {
+    const ticker = String(stock?.ticker || '').toUpperCase();
+    if (stock?.group === 'bluechip' || stock?.group === 'lowcost' || stock?.group === 'other') {
+        return stock.group;
+    }
+    if (stock?.preIpo || ticker === 'GCASH') return 'other';
+    if (BLUECHIP_TICKERS.has(ticker)) return 'bluechip';
+    if (LOWCOST_TICKERS.has(ticker) || stock?.autoAdd) return 'lowcost';
+    return 'other';
+}
 
 function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, s => ({
@@ -28,13 +42,13 @@ function formatVolume(n) {
 export class UIController {
     constructor(app) {
         this.app = app;
-
+        
         this.els = {
             date: document.getElementById('currentDate'),
             dashboardView: document.getElementById('dashboardView'),
             detailView: document.getElementById('detailView'),
             journalView: document.getElementById('journalView'),
-            stockGrid: document.getElementById('stockGrid'),
+            dashboardSections: document.getElementById('dashboardSections'),
             emptyWatchlist: document.getElementById('emptyWatchlist'),
             watchlistMessage: document.getElementById('watchlistMessage'),
             addTickerForm: document.getElementById('addTickerForm'),
@@ -84,7 +98,14 @@ export class UIController {
             preIpoFilingFacts: document.getElementById('preIpoFilingFacts'),
             alertBar: document.getElementById('alertBar'),
             alertList: document.getElementById('alertList'),
+            alertEmptyHint: document.getElementById('alertEmptyHint'),
             enableNotifBtn: document.getElementById('enableNotifBtn'),
+            testNotifBtn: document.getElementById('testNotifBtn'),
+            alertTestToast: document.getElementById('alertTestToast'),
+            alertTestToastBody: document.getElementById('alertTestToastBody'),
+            detailInvestInput: document.getElementById('detailInvestInput'),
+            detailForecastResult: document.getElementById('detailForecastResult'),
+            detailForecastMeta: document.getElementById('detailForecastMeta'),
             dismissAlertsBtn: document.getElementById('dismissAlertsBtn')
         };
 
@@ -108,7 +129,7 @@ export class UIController {
             this.els.aiErrorState.classList.add('hidden');
             this.els.aiInputState.classList.remove('hidden');
         });
-
+        
         this.els.addTickerForm.addEventListener('submit', (e) => {
             e.preventDefault();
             this.app.addTicker(this.els.addTickerInput.value);
@@ -126,7 +147,10 @@ export class UIController {
         });
         this.els.manualRefreshBtn?.addEventListener('click', () => this.app.manualRefresh());
         this.els.enableNotifBtn?.addEventListener('click', () => this.app.enableBrowserAlerts());
+        this.els.testNotifBtn?.addEventListener('click', () => this.app.testBrowserAlert());
         this.els.dismissAlertsBtn?.addEventListener('click', () => this.app.dismissAlerts());
+        this.els.detailInvestInput?.addEventListener('input', () => this.updateInvestmentForecast());
+        this.els.detailInvestInput?.addEventListener('change', () => this.updateInvestmentForecast());
         this.els.chartStyleButtons.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-chart-style]');
             if (btn) this.app.setChartStyle(btn.getAttribute('data-chart-style'));
@@ -333,7 +357,7 @@ export class UIController {
     }
 
     syncWatchlistControls() {
-        const current = this.els.sectorFilter.value;
+        const current = this.app.state.sectorFilter || this.els.sectorFilter.value || 'all';
         this.els.sectorFilter.innerHTML = '<option value="all">All sectors</option>';
         this.app.state.sectors().forEach(sector => {
             const opt = document.createElement('option');
@@ -341,9 +365,12 @@ export class UIController {
             opt.textContent = sector;
             this.els.sectorFilter.appendChild(opt);
         });
-        this.els.sectorFilter.value = this.app.state.sectors().includes(current) || current === 'all'
-            ? current
-            : 'all';
+        const valid = current === 'all' || this.app.state.sectors().includes(current);
+        const next = valid ? current : 'all';
+        this.els.sectorFilter.value = next;
+        if (this.app.state.sectorFilter !== next) {
+            this.app.state.sectorFilter = next;
+        }
     }
 
     setWatchlistMessage(msg, isError = false) {
@@ -385,6 +412,7 @@ export class UIController {
         if (!supported) {
             btn.textContent = 'Alerts unsupported';
             btn.disabled = true;
+            if (this.els.testNotifBtn) this.els.testNotifBtn.disabled = true;
             return;
         }
         if (Notification.permission === 'granted' && this.app.state.browserAlertsEnabled) {
@@ -397,23 +425,78 @@ export class UIController {
             btn.textContent = 'Enable browser alerts';
             btn.disabled = false;
         }
+        if (this.els.testNotifBtn) this.els.testNotifBtn.disabled = false;
     }
 
     renderAlerts(alerts) {
         if (!this.els.alertBar || !this.els.alertList) return;
-        if (!alerts?.length) {
-            this.els.alertBar.classList.add('hidden');
-            this.els.alertList.innerHTML = '';
+        const list = alerts || [];
+        this.els.alertBar.classList.toggle('is-empty', list.length === 0);
+        this.els.alertBar.classList.remove('hidden');
+
+        if (!list.length) {
+            this.els.alertList.innerHTML =
+                '<p id="alertEmptyHint" class="text-xs text-zinc-500">No ±3% day moves right now. Enable browser alerts, then use Test to confirm notices work.</p>';
+        } else {
+            this.els.alertList.innerHTML = list.map(a => `
+                <p class="text-xs leading-snug ${a.type === 'buy' ? 'alert-item-buy' : 'alert-item-sell'}">
+                    <span class="font-semibold">${escapeHtml(a.title)}</span>
+                    <span class="text-zinc-600"> · ${escapeHtml(a.body)}</span>
+                </p>
+            `).join('');
+        }
+        this.syncAlertControls();
+    }
+
+    showAlertTestToast(body) {
+        if (!this.els.alertTestToast || !this.els.alertTestToastBody) return;
+        this.els.alertTestToastBody.textContent = body;
+        this.els.alertTestToast.classList.remove('hidden');
+        clearTimeout(this._toastTimer);
+        this._toastTimer = setTimeout(() => {
+            this.els.alertTestToast.classList.add('hidden');
+        }, 6000);
+    }
+
+    updateInvestmentForecast() {
+        const input = this.els.detailInvestInput;
+        const resultEl = this.els.detailForecastResult;
+        const metaEl = this.els.detailForecastMeta;
+        if (!input || !resultEl || !metaEl) return;
+
+        const stock = this.app.state.activeStock;
+        const range = this.app.state.activeRange;
+        const snap = stock ? this.app.state.getSnapshot(stock.ticker, range) : null;
+        if (!snap?.bars?.length) {
+            resultEl.textContent = '—';
+            metaEl.textContent = 'Load a chart first to estimate from the range trend.';
             return;
         }
-        this.els.alertBar.classList.remove('hidden');
-        this.els.alertList.innerHTML = alerts.map(a => `
-            <p class="text-xs leading-snug ${a.type === 'buy' ? 'alert-item-buy' : 'alert-item-sell'}">
-                <span class="font-semibold">${escapeHtml(a.title)}</span>
-                <span class="text-zinc-600"> · ${escapeHtml(a.body)}</span>
-            </p>
-        `).join('');
-        this.syncAlertControls();
+        if (snap.source === 'preipo' || stock?.preIpo) {
+            resultEl.textContent = 'Not available for Pre-IPO';
+            metaEl.textContent = 'GCash is a simulated forecast, not a live investable quote yet.';
+            return;
+        }
+
+        const stats = summarizeBars(snap.bars);
+        const forecast = forecastInvestment(input.value, stats.pctChange, stats.latestClose);
+        if (!forecast.ok) {
+            resultEl.textContent = '—';
+            metaEl.textContent = forecast.note;
+            return;
+        }
+
+        const sign = forecast.gain >= 0 ? '+' : '';
+        const tone = forecast.gain >= 0 ? 'text-emerald-600' : 'text-red-600';
+        resultEl.className = `text-sm font-semibold mt-2 ${tone}`;
+        resultEl.textContent =
+            `≈ ₱${forecast.projected.toLocaleString('en-PH', { minimumFractionDigits: 2 })} (${sign}₱${Math.abs(forecast.gain).toLocaleString('en-PH', { minimumFractionDigits: 2 })})`;
+        const rangeLabel = this.rangeLabel(range);
+        const shareBit = forecast.shares != null
+            ? `${forecast.shares} sh at ₱${forecast.price.toFixed(2)} · `
+            : '';
+        metaEl.textContent =
+            `${shareBit}If the same ${rangeLabel} move (${stats.pctChange >= 0 ? '+' : ''}${stats.pctChange.toFixed(2)}%, ${stats.trendLabel}) applied to ₱${forecast.amount.toLocaleString('en-PH')}. Practice math only — not a prediction.`;
     }
 
     formatPurchaseLine(purchase) {
@@ -424,102 +507,170 @@ export class UIController {
         };
     }
 
-    renderDashboard() {
-        this.els.stockGrid.innerHTML = '';
-        const stocks = this.app.state.visibleStocks();
-        this.els.emptyWatchlist.classList.toggle('hidden', stocks.length > 0);
+    /** Always group in the UI so section headers never collapse into one flat list. */
+    dashboardSectionsFromWatchlist() {
+        const visible = this.app.state.visibleStocks();
+        const defs = CONFIG.watchlistSections || WATCHLIST_SECTIONS || [];
+        return defs.map(section => ({
+            ...section,
+            stocks: visible.filter(s => stockGroup(s) === section.id)
+        }));
+    }
 
-        stocks.forEach(stock => {
-            const snap = this.app.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
-            const isPreIpo = Boolean(stock.preIpo || snap?.preIpo || snap?.source === 'preipo');
-            const filing = snap?.filing || (isPreIpo ? CONFIG.gcashPreIpo : null);
+    renderDashboard() {
+        const host = this.els.dashboardSections;
+        if (!host) {
+            console.error('dashboardSections element missing');
+            return;
+        }
+
+        const sections = this.dashboardSectionsFromWatchlist();
+        const total = sections.reduce((n, s) => n + (s.stocks?.length || 0), 0);
+        if (this.els.emptyWatchlist) {
+            this.els.emptyWatchlist.classList.toggle('hidden', total > 0);
+        }
+
+        // Build off-DOM so a card error cannot leave a wiped page.
+        const frag = document.createDocumentFragment();
+        const chartJobs = [];
+
+        sections.forEach(section => {
+            if (!section.stocks?.length) return;
+
+            const block = document.createElement('section');
+            block.className = `watchlist-section watchlist-section--${section.id}`;
+            block.dataset.section = section.id;
+
+            const heading = document.createElement('div');
+            heading.className = 'watchlist-section__head';
+            heading.innerHTML = `
+                <p class="watchlist-section__eyebrow">${escapeHtml(
+                    section.id === 'bluechip' ? 'Core list' :
+                    section.id === 'lowcost' ? 'Income basket' : 'Extras'
+                )}</p>
+                <h3 class="watchlist-section__title">${escapeHtml(section.title)}</h3>
+                <p class="watchlist-section__blurb">${escapeHtml(section.blurb || '')}</p>
+            `;
+            block.appendChild(heading);
+
+            const grid = document.createElement('div');
+            grid.className = 'watchlist-section__grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
+
+            section.stocks.forEach(stock => {
+                try {
+                    const { card, snap } = this.buildStockCard(stock);
+                    grid.appendChild(card);
+                    if (snap?.bars?.length) {
+                        chartJobs.push({ id: `dash-chart-${stock.ticker}`, bars: snap.bars });
+                    }
+                } catch (err) {
+                    console.warn(`Card render failed for ${stock?.ticker}:`, err);
+                }
+            });
+
+            if (!grid.childElementCount) return;
+            block.appendChild(grid);
+            frag.appendChild(block);
+        });
+
+        host.replaceChildren(frag);
+        chartJobs.forEach(job => this.drawMiniChart(job.id, job.bars));
+    }
+
+    buildStockCard(stock) {
+        const snap = this.app.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
+        const bars = Array.isArray(snap?.bars) ? snap.bars : [];
+        const isPreIpo = Boolean(stock.preIpo || snap?.preIpo || snap?.source === 'preipo');
+        const filing = snap?.filing || (isPreIpo ? CONFIG.gcashPreIpo : null);
             const card = document.createElement('div');
-            card.className = `bg-white border border-zinc-200 rounded-lg p-5 shadow-sm flex flex-col hover:shadow-md transition-shadow cursor-pointer relative${isPreIpo ? ' preipo-card' : ''}`;
+        card.className = `bg-white border border-zinc-200 rounded-lg p-5 shadow-sm flex flex-col hover:shadow-md transition-shadow cursor-pointer relative${isPreIpo ? ' preipo-card' : ''}`;
             card.onclick = () => this.app.openDetails(stock.ticker);
 
-            const latest = snap ? snap.bars[snap.bars.length - 1].close : null;
-            const stats = snap ? summarizeBars(snap.bars) : null;
-            const isUp = stats ? stats.pctChange >= 0 : true;
-            const source = snap?.source;
-            const purchase = stats ? this.formatPurchaseLine(stats.purchase) : null;
+        const lastBar = bars.length ? bars[bars.length - 1] : null;
+        const latest = lastBar != null && Number.isFinite(Number(lastBar.close))
+            ? Number(lastBar.close)
+            : null;
+        const stats = bars.length ? summarizeBars(bars) : null;
+        const isUp = stats ? stats.pctChange >= 0 : true;
+        const source = snap?.source;
+        const purchase = stats ? this.formatPurchaseLine(stats.purchase) : null;
+        const ipoPrice = filing?.finalOfferPrice != null ? Number(filing.finalOfferPrice) : null;
 
             card.innerHTML = `
-                ${stock.locked ? '' : `<button type="button" data-remove="${escapeHtml(stock.ticker)}" class="absolute top-3 right-3 text-zinc-300 hover:text-zinc-700 text-lg leading-none" aria-label="Remove ${escapeHtml(stock.ticker)}">&times;</button>`}
-                <div class="flex justify-between items-start mb-4 ${stock.locked ? '' : 'pr-6'}">
+            ${stock.locked ? '' : `<button type="button" data-remove="${escapeHtml(stock.ticker)}" class="absolute top-3 right-3 text-zinc-300 hover:text-zinc-700 text-lg leading-none" aria-label="Remove ${escapeHtml(stock.ticker)}">&times;</button>`}
+            <div class="flex justify-between items-start mb-4 ${stock.locked ? '' : 'pr-6'}">
                     <div>
-                        <h3 class="text-sm font-bold text-zinc-900">${escapeHtml(stock.name)}</h3>
-                        <p class="text-xs font-medium text-zinc-500 mt-0.5 tracking-wider uppercase">${
-                            isPreIpo ? 'Simulated · Pre-IPO' : `PSE:${escapeHtml(stock.ticker)}`
-                        }</p>
+                    <h3 class="text-sm font-bold text-zinc-900">${escapeHtml(stock.name)}</h3>
+                    <p class="text-xs font-medium text-zinc-500 mt-0.5 tracking-wider uppercase">${
+                        isPreIpo ? 'Simulated · Pre-IPO' : `PSE:${escapeHtml(stock.ticker)}`
+                    }</p>
                     </div>
                     <span class="inline-flex items-center rounded bg-zinc-100 px-2 py-1 text-[9px] font-bold text-zinc-600 uppercase tracking-wide">
-                        ${escapeHtml(stock.sector)}
+                    ${escapeHtml(stock.sector)}
                     </span>
                 </div>
-                ${isPreIpo ? `
-                <div class="mb-3 p-2 rounded border border-amber-100 bg-amber-50">
-                    <p class="text-[9px] font-bold uppercase tracking-widest text-amber-800">Final IPO ₱${Number(filing.finalOfferPrice).toFixed(2)} · not listed yet</p>
-                    <p class="text-[10px] text-zinc-600 mt-1 leading-snug">Pre-listing forecast around the official ₱${Number(filing.finalOfferPrice).toFixed(2)} price. Offer ${escapeHtml(filing.offerPeriod || '')}. Listing ${escapeHtml(filing.listingTarget)}.</p>
-                </div>` : ''}
-                <div class="flex justify-between items-end mb-2">
-                    <div class="has-tip">
-                        <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">${isPreIpo ? 'Model price' : 'Last close'}</p>
-                        <p class="text-xl font-bold text-zinc-900">${latest == null ? 'Loading...' : '₱' + latest.toFixed(2)}</p>
-                        <p class="text-[10px] text-zinc-500 mt-1">${isPreIpo ? 'Simulated, not a PSE quote' : 'Ending market price'}</p>
-                        <span class="tip-bubble">${isPreIpo
-                            ? 'Education only. Built from Mynt IPO-band and earnings context, not live trading.'
-                            : 'The stock’s ending price for the last trading day.'}</span>
-                    </div>
-                    <div class="text-right">
-                        <span class="text-xs font-bold ${isUp ? 'text-emerald-600' : 'text-red-600'}">${
-                            stats ? `${stats.pctChange >= 0 ? '+' : ''}${stats.pctChange.toFixed(2)}%` : '--'
-                        }</span>
-                    </div>
+            ${isPreIpo ? `
+            <div class="mb-3 p-2 rounded border border-amber-100 bg-amber-50">
+                <p class="text-[9px] font-bold uppercase tracking-widest text-amber-800">Final IPO ${ipoPrice != null ? `₱${ipoPrice.toFixed(2)}` : '—'} · not listed yet</p>
+                <p class="text-[10px] text-zinc-600 mt-1 leading-snug">Pre-listing forecast around the official ${ipoPrice != null ? `₱${ipoPrice.toFixed(2)}` : 'IPO'} price. Offer ${escapeHtml(filing?.offerPeriod || '')}. Listing ${escapeHtml(filing?.listingTarget || '')}.</p>
+            </div>` : ''}
+            <div class="flex justify-between items-end mb-2">
+                <div class="has-tip">
+                    <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">${isPreIpo ? 'Model price' : 'Last close'}</p>
+                    <p class="text-xl font-bold text-zinc-900">${latest == null ? 'Loading...' : '₱' + latest.toFixed(2)}</p>
+                    <p class="text-[10px] text-zinc-500 mt-1">${isPreIpo ? 'Simulated, not a PSE quote' : 'Ending market price'}</p>
+                    <span class="tip-bubble">${isPreIpo
+                        ? 'Education only. Built from Mynt IPO-band and earnings context, not live trading.'
+                        : 'The stock’s ending price for the last trading day.'}</span>
                 </div>
-                <div class="mb-3 flex flex-wrap gap-1.5 items-center">
-                    ${isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Pre-IPO forecast</span>` : ''}
-                    ${stats && !isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
-                        isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                    }">${stats.trendLabel}</span>` : ''}
-                    ${source === 'preipo' ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Simulated<span class="tip-bubble">Not listed on the PSE. Chart is a forecast model only.</span></span>`
-                        : source ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
-                        source === 'live' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                    }">${source === 'live' ? 'Live' : 'Simulated'}<span class="tip-bubble">${
-                        source === 'live'
-                            ? 'Prices from PSE Edge (or phisix fallback) in Philippine pesos.'
-                            : 'Live quotes failed, so this is practice data only.'
-                    }</span></span>` : ''}
+                <div class="text-right">
+                    <span class="text-xs font-bold ${isUp ? 'text-emerald-600' : 'text-red-600'}">${
+                        stats ? `${stats.pctChange >= 0 ? '+' : ''}${stats.pctChange.toFixed(2)}%` : '--'
+                    }</span>
                 </div>
-                ${isPreIpo && filing ? `
-                <div class="mb-3 bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2 text-[10px] text-zinc-600 space-y-0.5">
-                    <p>Final IPO: ₱${Number(filing.finalOfferPrice).toFixed(2)} · valuation ~₱${filing.impliedValuationB}B</p>
-                    <p>NI 2025: ₱${filing.netIncome2025B}B · Q1 2026: ₱${filing.netIncomeQ12026B}B</p>
-                </div>` : ''}
-                ${purchase && !isPreIpo ? `
-                <div class="mb-3 has-tip bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2">
-                    <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Starter buy idea</p>
-                    <p class="text-sm font-semibold text-zinc-900 mt-0.5">${escapeHtml(purchase.amount)}</p>
-                    <p class="text-[10px] text-zinc-500 mt-0.5">${escapeHtml(purchase.meta)}</p>
-                    <span class="tip-bubble">A practice-sized buy near recent support. About ₱1,000 would be at risk if the stop is hit. Not advice.</span>
-                </div>` : ''}
-                <div class="h-28 mb-4 w-full relative">
-                     <canvas id="dash-chart-${escapeHtml(stock.ticker)}"></canvas>
-                </div>
+            </div>
+            <div class="mb-3 flex flex-wrap gap-1.5 items-center">
+                ${isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Pre-IPO forecast</span>` : ''}
+                ${stats && !isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                    isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                }">${stats.trendLabel}</span>` : ''}
+                ${source === 'preipo' ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Simulated<span class="tip-bubble">Not listed on the PSE. Chart is a forecast model only.</span></span>`
+                    : source ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                    source === 'live' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                }">${source === 'live' ? 'Live' : 'Simulated'}<span class="tip-bubble">${
+                    source === 'live'
+                        ? 'Prices from PSE Edge (or phisix fallback) in Philippine pesos.'
+                        : 'Live quotes failed, so this is practice data only.'
+                }</span></span>` : ''}
+            </div>
+            ${isPreIpo && filing ? `
+            <div class="mb-3 bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2 text-[10px] text-zinc-600 space-y-0.5">
+                <p>Final IPO: ${ipoPrice != null ? `₱${ipoPrice.toFixed(2)}` : '—'} · valuation ~₱${filing.impliedValuationB ?? '—'}B</p>
+                <p>NI 2025: ₱${filing.netIncome2025B ?? '—'}B · Q1 2026: ₱${filing.netIncomeQ12026B ?? '—'}B</p>
+            </div>` : ''}
+            ${purchase && !isPreIpo ? `
+            <div class="mb-3 has-tip bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2">
+                <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Starter buy idea</p>
+                <p class="text-sm font-semibold text-zinc-900 mt-0.5">${escapeHtml(purchase.amount || '—')}</p>
+                <p class="text-[10px] text-zinc-500 mt-0.5">${escapeHtml(purchase.meta || '')}</p>
+                <span class="tip-bubble">A practice-sized buy near recent support. About ₱1,000 would be at risk if the stop is hit. Not advice.</span>
+            </div>` : ''}
+            <div class="h-28 mb-4 w-full relative">
+                 <canvas id="dash-chart-${escapeHtml(stock.ticker)}"></canvas>
+            </div>
                 <div class="mt-auto pt-4 border-t border-zinc-100 flex justify-between items-center text-xs">
-                     <span class="text-zinc-500 font-medium">${isPreIpo ? 'View forecast' : 'View Analysis'}</span>
+                 <span class="text-zinc-500 font-medium">${isPreIpo ? 'View forecast' : 'View Analysis'}</span>
                      <svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </div>
             `;
-            const removeBtn = card.querySelector('[data-remove]');
-            if (removeBtn) {
-                removeBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.app.removeTicker(stock.ticker);
-                });
-            }
-            this.els.stockGrid.appendChild(card);
-            if (snap) this.drawMiniChart(`dash-chart-${stock.ticker}`, snap.bars);
-        });
+        const removeBtn = card.querySelector('[data-remove]');
+        if (removeBtn) {
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.app.removeTicker(stock.ticker);
+            });
+        }
+        return { card, snap };
     }
 
     drawMiniChart(canvasId, bars) {
@@ -948,6 +1099,7 @@ export class UIController {
                 ? 'Practice sizing only. GCash is not listed yet.'
                 : purchase.meta;
         }
+        this.updateInvestmentForecast();
 
         if (this.els.preIpoBanner) {
             this.els.preIpoBanner.classList.toggle('hidden', !isPreIpo);
@@ -1022,7 +1174,7 @@ export class UIController {
         this.els.aiAsOf.textContent = `As of ${formatFetchedAt(at)}${
             source === 'preipo' ? ' · Pre-IPO simulation' : source === 'simulated' ? ' · simulated prices' : ''
         }`;
-
+        
         const action = String(aiData.action).toUpperCase();
         this.els.outAction.textContent = action;
         this.els.outAction.className = 'text-sm font-bold tracking-widest uppercase';

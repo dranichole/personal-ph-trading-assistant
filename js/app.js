@@ -19,6 +19,7 @@ class TradingAssistantApp {
         this.state.setTheme(this.state.theme);
         this.ui.syncThemeToggle();
         this.ui.syncWatchlistControls();
+        this.ui.renderAlerts(this.state.activeAlerts || []);
         this.ui.syncAlertControls();
         this.ui.renderDashboard();
         this.ui.renderJournal();
@@ -206,6 +207,51 @@ class TradingAssistantApp {
             this.state.setBrowserAlertsEnabled(false);
             this.ui.syncAlertControls();
             this.ui.setWatchlistMessage('Browser alerts were not allowed. In-app banners still work.', true);
+        }
+    }
+
+    /** Visible in-app toast + optional OS notification so the feature can be verified. */
+    async testBrowserAlert() {
+        const sample = {
+            key: `test|${Date.now()}`,
+            type: 'buy',
+            ticker: 'TEST',
+            title: 'Test alert · Trading Assistant',
+            body: 'Sample notice: a −3% dip would look like this. In-app toast always shows; browser popup needs permission.'
+        };
+
+        this.state.activeAlerts = [sample, ...(this.state.activeAlerts || []).filter(a => a.ticker !== 'TEST')];
+        this.ui.renderAlerts(this.state.activeAlerts);
+        this.ui.showAlertTestToast(sample.body);
+
+        if (typeof Notification === 'undefined') {
+            this.ui.setWatchlistMessage('In-app test shown. This browser has no Notification API.', true);
+            return;
+        }
+
+        let permission = Notification.permission;
+        if (permission === 'default') {
+            permission = await Notification.requestPermission();
+        }
+        if (permission === 'granted') {
+            this.state.setBrowserAlertsEnabled(true);
+            this.ui.syncAlertControls();
+            try {
+                new Notification(sample.title, {
+                    body: sample.body,
+                    tag: sample.key
+                });
+                this.ui.setWatchlistMessage('Test sent: check the on-page toast and your system notification.');
+            } catch (error) {
+                console.warn('Test notification failed:', error);
+                this.ui.setWatchlistMessage('On-page toast shown; system notification failed.', true);
+            }
+        } else {
+            this.ui.syncAlertControls();
+            this.ui.setWatchlistMessage(
+                'On-page toast shown. Allow notifications in the browser to also see the system popup.',
+                true
+            );
         }
     }
 

@@ -158,6 +158,34 @@ export function summarizeBars(bars) {
 }
 
 /**
+ * Educational “if I invested ₱X” projection using the selected range’s % change.
+ * Not a prediction — replays the observed move on a cash amount.
+ */
+export function forecastInvestment(investPesos, pctChange, latestClose) {
+    const amount = Number(investPesos);
+    const pct = Number(pctChange);
+    const price = Number(latestClose);
+    if (!Number.isFinite(amount) || amount <= 0) {
+        return { ok: false, note: 'Enter a positive peso amount.' };
+    }
+    if (!Number.isFinite(pct)) {
+        return { ok: false, note: 'Need a chart range % change first.' };
+    }
+    const projected = amount * (1 + pct / 100);
+    const gain = projected - amount;
+    const shares = Number.isFinite(price) && price > 0 ? Math.floor(amount / price) : null;
+    return {
+        ok: true,
+        amount,
+        pct,
+        projected: parseFloat(projected.toFixed(2)),
+        gain: parseFloat(gain.toFixed(2)),
+        shares,
+        price: Number.isFinite(price) ? price : null
+    };
+}
+
+/**
  * Educational starter buy idea for beginners.
  * Entry leans toward recent support; size risks a fixed peso budget with a ~1.5× ATR stop.
  */

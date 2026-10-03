@@ -18,8 +18,8 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 ## Core Features
 
 ### Watchlist & data
-- Default PSE names (SM, JFC, BDO, ALI, GLO) plus custom tickers you add
-- Sort by watchlist order, % change, name, or sector; filter by sector
+- Dashboard split into **Philippine Blue Chip Companies**, **Low-Cost Income Names** (under-₱10 REITs / income seeds), and **Special & Custom** (GCash Pre-IPO + tickers you add)
+- Sort by watchlist order, % change, name, or sector; filter by sector within those sections
 - **Last close**, period % change, **Bullish / Bearish**, and **Live / Simulated** badges
 - Quiet **auto-refresh** (about every 5 minutes during PSE hours in Asia/Manila, every 30 minutes otherwise) with a header “Last refreshed” clock
 - OHLCV history for **1W / 1M / 3M / 1Y** on the detail view
@@ -36,7 +36,8 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Educational **starter buy idea** (example size near support using a fixed practice risk budget)
 - Smooth fade tooltips on indicator tiles and key labels
 - **GCash Pre-IPO forecast** card: official final IPO **₱6.60**, listing **Oct 20, 2026**, valuation ~**₱442B**; simulated pre-listing path around that price until live `GCASH.PS` data exists; AI receives Mynt filing/earnings context
-- **On-site alerts** (free): banner when a name dips ≥3% or rises ≥3% vs prior close; optional browser notifications while you have the site open
+- **On-site alerts** (free): always-visible alert strip; banner when a name dips ≥3% or rises ≥3% vs prior close; **Enable** + **Test alert** for browser notifications; on-page toast so you can verify without waiting for a real move
+- **If I invested** on detail view: enter a peso amount; app estimates the same % move as the selected chart range (educational replay, not a prediction)
 ### AI mentor
 - Runs through **`/api/analyze`** so `GEMINI_API_KEY` stays in Vercel env vars
 - Prompt includes price change, indicators, recent closes, and whether data is live or simulated

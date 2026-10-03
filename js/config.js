@@ -31,28 +31,78 @@ export const GCASH_PRE_IPO = {
     note: 'Simulated pre-listing forecast only. Final IPO price is ₱6.60. GCASH is not trading on the PSE until the scheduled listing. Series models market expectations around that price and Mynt’s disclosed earnings.'
 };
 
+/** Large, liquid PSE names commonly treated as blue chips. */
+export const BLUECHIP_STOCKS = [
+    { ticker: 'SM', name: 'SM Investments Corp', sector: 'Conglomerate', group: 'bluechip' },
+    { ticker: 'JFC', name: 'Jollibee Foods Corp', sector: 'Consumer Services', group: 'bluechip' },
+    { ticker: 'BDO', name: 'BDO Unibank, Inc.', sector: 'Financials', group: 'bluechip' },
+    { ticker: 'ALI', name: 'Ayala Land, Inc.', sector: 'Real Estate', group: 'bluechip' },
+    { ticker: 'GLO', name: 'Globe Telecom', sector: 'Telecommunications', group: 'bluechip' }
+];
+
+/**
+ * Affordable passive-income / lower-volatility PSE names (mostly under ₱10).
+ * Focused on REITs and liquid dividend-leaning names — educational shortlist, not advice.
+ * Prices move; “under ₱10” reflects the ~Oct 2026 screen used when adding these.
+ */
+export const INCOME_SEED_STOCKS = [
+    { ticker: 'DDMPR', name: 'DDMP REIT, Inc.', sector: 'REIT · Income', group: 'lowcost', autoAdd: true, note: '~₱1 entry REIT; office-heavy yield play' },
+    { ticker: 'CREIT', name: 'Citicore Energy REIT', sector: 'REIT · Income', group: 'lowcost', autoAdd: true, note: 'Renewable REIT; long leases, regular dividends' },
+    { ticker: 'FILRT', name: 'Filinvest REIT Corp.', sector: 'REIT · Income', group: 'lowcost', autoAdd: true, note: 'Office REIT with quarterly payouts' },
+    { ticker: 'RCR', name: 'RL Commercial REIT', sector: 'REIT · Income', group: 'lowcost', autoAdd: true, note: 'Robinsons-backed commercial REIT' },
+    { ticker: 'ACEN', name: 'ACEN Corporation', sector: 'Power · Income', group: 'lowcost', autoAdd: true, note: 'Large renewable generator; liquid under ₱10' },
+    { ticker: 'SHNG', name: 'Shang Properties, Inc.', sector: 'Real Estate · Income', group: 'lowcost', autoAdd: true, note: 'Malls/property cash-flow name under ₱10' },
+    { ticker: 'DMC', name: 'DMCI Holdings, Inc.', sector: 'Conglomerate · Income', group: 'lowcost', autoAdd: true, note: 'Diversified conglomerate; common dividend payer' },
+    { ticker: 'COSCO', name: 'Cosco Capital, Inc.', sector: 'Consumer · Income', group: 'lowcost', autoAdd: true, note: 'Puregold parent; defensive retail cash flows' },
+    { ticker: 'MREIT', name: 'MREIT, Inc.', sector: 'REIT · Income', group: 'lowcost', autoAdd: true, note: 'Megaworld office REIT; slightly over ₱10, strong income track' }
+];
+
+/** Dashboard section order and copy. */
+export const WATCHLIST_SECTIONS = [
+    {
+        id: 'bluechip',
+        title: 'Philippine Blue Chip Companies',
+        blurb: 'Large, liquid PSE names often used as core holdings for study.'
+    },
+    {
+        id: 'lowcost',
+        title: 'Low-Cost Income Names',
+        blurb: 'Mostly under ₱10 — REITs and affordable names for passive-income style practice (not advice).'
+    },
+    {
+        id: 'other',
+        title: 'Special & Custom',
+        blurb: 'Pre-IPO forecasts and tickers you add yourself.'
+    }
+];
+
 export const CONFIG = {
     defaultStocks: [
-        { ticker: 'SM', name: 'SM Investments Corp', sector: 'Conglomerate' },
-        { ticker: 'JFC', name: 'Jollibee Foods Corp', sector: 'Consumer Services' },
-        { ticker: 'BDO', name: 'BDO Unibank, Inc.', sector: 'Financials' },
-        { ticker: 'ALI', name: 'Ayala Land, Inc.', sector: 'Real Estate' },
-        { ticker: 'GLO', name: 'Globe Telecom', sector: 'Telecommunications' },
+        ...BLUECHIP_STOCKS,
+        ...INCOME_SEED_STOCKS,
         {
             ticker: GCASH_PRE_IPO.ticker,
             name: GCASH_PRE_IPO.name,
             sector: GCASH_PRE_IPO.sector,
+            group: 'other',
             preIpo: true,
             locked: true
         }
     ],
+    bluechipStocks: BLUECHIP_STOCKS,
+    incomeSeedStocks: INCOME_SEED_STOCKS,
+    watchlistSections: WATCHLIST_SECTIONS,
     gcashPreIpo: GCASH_PRE_IPO,
     storageKeys: {
         watchlist: 'ta_watchlist_v1',
         journal: 'ta_journal_v1',
         theme: 'ta_theme_v1',
-        alertLog: 'ta_alert_log_v1'
+        alertLog: 'ta_alert_log_v1',
+        /** Bump when a new income seed batch should be offered once to existing users */
+        incomeSeedVersion: 'ta_income_seed_ver'
     },
+    /** Increment when adding a new auto-add income batch */
+    incomeSeedVersion: 1,
     ranges: [
         { id: '5d', label: '1W' },
         { id: '1mo', label: '1M' },

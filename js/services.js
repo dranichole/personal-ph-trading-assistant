@@ -5,7 +5,22 @@
  */
 import { CONFIG, GCASH_PRE_IPO } from './config.js';
 
-const FALLBACK_BASE = { SM: 495.0, JFC: 142.0, BDO: 110.6, ALI: 15.14, GLO: 1554.0 };
+const FALLBACK_BASE = {
+    SM: 495.0,
+    JFC: 142.0,
+    BDO: 110.6,
+    ALI: 15.14,
+    GLO: 1554.0,
+    DDMPR: 1.03,
+    CREIT: 2.9,
+    FILRT: 2.73,
+    RCR: 6.1,
+    ACEN: 2.62,
+    SHNG: 3.0,
+    DMC: 7.39,
+    COSCO: 7.4,
+    MREIT: 13.4
+};
 
 function formatBarDate(timestampSec) {
     return new Date(timestampSec * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
