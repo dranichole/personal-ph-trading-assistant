@@ -42,6 +42,7 @@ export class AppState {
         this.aiCache = {};
         this.activeStock = null;
         this.activeRange = CONFIG.dashboardRange;
+        this.forecastHorizon = '1mo';
         this.sectorFilter = 'all';
         this.sortBy = 'watchlist';
         this.currentView = 'dashboard';

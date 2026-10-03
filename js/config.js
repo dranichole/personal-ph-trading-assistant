@@ -109,7 +109,16 @@ export const CONFIG = {
         { id: '3mo', label: '3M' },
         { id: '1y', label: '1Y' }
     ],
+    /** Horizons for the detail-view investment projection (includes 6M). */
+    forecastHorizons: [
+        { id: '5d', label: '1W' },
+        { id: '1mo', label: '1M' },
+        { id: '3mo', label: '3M' },
+        { id: '6mo', label: '6M' },
+        { id: '1y', label: '1Y' }
+    ],
     dashboardRange: '1mo',
+    forecastHistoryRange: '1y',
     refreshMsOpen: 5 * 60 * 1000,
     refreshMsClosed: 30 * 60 * 1000,
     starterRiskPesos: 1000,

@@ -4,7 +4,7 @@
  * ==========================================
  */
 import { CONFIG, BLUECHIP_STOCKS, INCOME_SEED_STOCKS, WATCHLIST_SECTIONS } from './config.js';
-import { summarizeBars, forecastInvestment } from './indicators.js';
+import { summarizeBars, projectHorizonInvestment, FORECAST_HORIZONS } from './indicators.js';
 
 const BLUECHIP_TICKERS = new Set(BLUECHIP_STOCKS.map(s => s.ticker));
 const LOWCOST_TICKERS = new Set(INCOME_SEED_STOCKS.map(s => s.ticker));
@@ -105,7 +105,9 @@ export class UIController {
             alertTestToastBody: document.getElementById('alertTestToastBody'),
             detailInvestInput: document.getElementById('detailInvestInput'),
             detailForecastResult: document.getElementById('detailForecastResult'),
+            detailForecastBand: document.getElementById('detailForecastBand'),
             detailForecastMeta: document.getElementById('detailForecastMeta'),
+            forecastHorizonButtons: document.getElementById('forecastHorizonButtons'),
             dismissAlertsBtn: document.getElementById('dismissAlertsBtn')
         };
 
@@ -151,6 +153,7 @@ export class UIController {
         this.els.dismissAlertsBtn?.addEventListener('click', () => this.app.dismissAlerts());
         this.els.detailInvestInput?.addEventListener('input', () => this.updateInvestmentForecast());
         this.els.detailInvestInput?.addEventListener('change', () => this.updateInvestmentForecast());
+        this.buildForecastHorizonButtons();
         this.els.chartStyleButtons.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-chart-style]');
             if (btn) this.app.setChartStyle(btn.getAttribute('data-chart-style'));
@@ -458,45 +461,111 @@ export class UIController {
         }, 6000);
     }
 
-    updateInvestmentForecast() {
+    buildForecastHorizonButtons() {
+        const host = this.els.forecastHorizonButtons;
+        if (!host) return;
+        const horizons = CONFIG.forecastHorizons || FORECAST_HORIZONS;
+        host.innerHTML = '';
+        horizons.forEach(h => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.dataset.forecastHorizon = h.id;
+            btn.textContent = h.label;
+            btn.className = 'forecast-horizon-btn px-2 py-1 text-[10px] font-semibold rounded border border-zinc-200 text-zinc-500';
+            btn.addEventListener('click', () => this.app.setForecastHorizon(h.id));
+            host.appendChild(btn);
+        });
+        this.syncForecastHorizonButtons();
+    }
+
+    syncForecastHorizonButtons() {
+        const host = this.els.forecastHorizonButtons;
+        if (!host) return;
+        const active = this.app.state.forecastHorizon || '1mo';
+        host.querySelectorAll('.forecast-horizon-btn').forEach(btn => {
+            const on = btn.dataset.forecastHorizon === active;
+            btn.className = `forecast-horizon-btn px-2 py-1 text-[10px] font-semibold rounded border ${
+                on ? 'bg-white text-zinc-900 border-zinc-300 shadow-sm' : 'border-zinc-200 text-zinc-500'
+            }`;
+        });
+    }
+
+    async updateInvestmentForecast() {
         const input = this.els.detailInvestInput;
         const resultEl = this.els.detailForecastResult;
+        const bandEl = this.els.detailForecastBand;
         const metaEl = this.els.detailForecastMeta;
         if (!input || !resultEl || !metaEl) return;
 
         const stock = this.app.state.activeStock;
-        const range = this.app.state.activeRange;
-        const snap = stock ? this.app.state.getSnapshot(stock.ticker, range) : null;
-        if (!snap?.bars?.length) {
+        if (!stock) {
             resultEl.textContent = '—';
-            metaEl.textContent = 'Load a chart first to estimate from the range trend.';
+            if (bandEl) bandEl.textContent = '—';
+            metaEl.textContent = 'Open a stock to project from its live history.';
             return;
         }
-        if (snap.source === 'preipo' || stock?.preIpo) {
+        if (stock.preIpo) {
             resultEl.textContent = 'Not available for Pre-IPO';
+            if (bandEl) bandEl.textContent = '—';
             metaEl.textContent = 'GCash is a simulated forecast, not a live investable quote yet.';
             return;
         }
 
-        const stats = summarizeBars(snap.bars);
-        const forecast = forecastInvestment(input.value, stats.pctChange, stats.latestClose);
+        this.syncForecastHorizonButtons();
+        resultEl.textContent = 'Calculating…';
+        if (bandEl) bandEl.textContent = 'Pulling price history…';
+
+        // Prefer the longest live series we can get (1y → 6mo → 3mo → chart range).
+        const candidates = [
+            CONFIG.forecastHistoryRange || '1y',
+            '6mo',
+            '3mo',
+            this.app.state.activeRange,
+            '1mo'
+        ];
+        let snap = null;
+        for (const rangeId of [...new Set(candidates)]) {
+            try {
+                const next = await this.app.ensureSnapshot(stock.ticker, rangeId);
+                if (!next?.bars?.length) continue;
+                if (next.source === 'preipo' || next.source === 'simulated') continue;
+                if (!snap || next.bars.length > snap.bars.length) snap = next;
+                // Good enough for any horizon once we have ~4 months of sessions
+                if (snap.bars.length >= 90) break;
+            } catch {
+                /* try next range */
+            }
+        }
+        if (!snap?.bars?.length) {
+            resultEl.textContent = '—';
+            if (bandEl) bandEl.textContent = '—';
+            metaEl.textContent = 'Live history unavailable for projection.';
+            return;
+        }
+
+        const horizon = this.app.state.forecastHorizon || '1mo';
+        const forecast = projectHorizonInvestment(snap.bars, input.value, horizon);
         if (!forecast.ok) {
             resultEl.textContent = '—';
+            if (bandEl) bandEl.textContent = '—';
             metaEl.textContent = forecast.note;
             return;
         }
 
         const sign = forecast.gain >= 0 ? '+' : '';
         const tone = forecast.gain >= 0 ? 'text-emerald-600' : 'text-red-600';
-        resultEl.className = `text-sm font-semibold mt-2 ${tone}`;
+        resultEl.className = `text-sm font-semibold mt-1 ${tone}`;
         resultEl.textContent =
             `≈ ₱${forecast.projected.toLocaleString('en-PH', { minimumFractionDigits: 2 })} (${sign}₱${Math.abs(forecast.gain).toLocaleString('en-PH', { minimumFractionDigits: 2 })})`;
-        const rangeLabel = this.rangeLabel(range);
+        if (bandEl) {
+            bandEl.textContent =
+                `1σ band ₱${forecast.low.toLocaleString('en-PH', { minimumFractionDigits: 2 })} – ₱${forecast.high.toLocaleString('en-PH', { minimumFractionDigits: 2 })} · expected ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% over ${forecast.horizonLabel}`;
+        }
         const shareBit = forecast.shares != null
             ? `${forecast.shares} sh at ₱${forecast.price.toFixed(2)} · `
             : '';
         metaEl.textContent =
-            `${shareBit}If the same ${rangeLabel} move (${stats.pctChange >= 0 ? '+' : ''}${stats.pctChange.toFixed(2)}%, ${stats.trendLabel}) applied to ₱${forecast.amount.toLocaleString('en-PH')}. Practice math only — not a prediction.`;
+            `${shareBit}Trail ${forecast.trailPct >= 0 ? '+' : ''}${forecast.trailPct}% over last ${forecast.horizonLabel}; vol ±${forecast.volPct}%. ${forecast.trendNote}. ${forecast.method} Not a promise of profit.`;
     }
 
     formatPurchaseLine(purchase) {

@@ -29,6 +29,7 @@ function formatBarDate(timestampSec) {
 function rangeBarCount(range) {
     if (range === '5d') return 5;
     if (range === '3mo') return 63;
+    if (range === '6mo') return 126;
     if (range === '1y') return 252;
     return 22;
 }
@@ -111,8 +112,9 @@ async function fetchJson(url, label) {
 async function fetchPhisixSnapshot(ticker, range) {
     const needed =
         range === '5d' ? 5 :
-        range === '3mo' ? 40 :
-        range === '1y' ? 60 :
+        range === '3mo' ? 66 :
+        range === '6mo' ? 130 :
+        range === '1y' ? 260 :
         22;
 
     const days = tradingDaysBack(needed);

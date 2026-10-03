@@ -280,8 +280,10 @@ async function fetchPhisixDay(ticker, ymd) {
 async function fetchPhisixBars(ticker, range) {
     const needed =
         range === '5d' ? 5 :
-        range === '3mo' ? 63 :
-        range === '1y' ? 120 :
+        range === '3mo' ? 66 :
+        range === '6mo' ? 130 :
+        range === '1y' ? 260 :
+        range === '2y' ? 260 :
         22;
 
     const days = tradingDaysBack(needed);

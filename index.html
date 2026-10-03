@@ -183,15 +183,18 @@
                         <p id="detailPurchaseMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">--</p>
                     </div>
                     <div id="detailForecastBox" class="bg-zinc-50 border border-zinc-200 rounded-lg p-3 forecast-box">
-                        <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">If I invested</p>
-                        <div class="flex items-center gap-2">
+                        <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Horizon projection</p>
+                        <p class="text-[10px] text-zinc-500 mb-2 leading-snug">How much ₱X might be worth over your chosen window, from this stock’s own price history (trailing return + volatility).</p>
+                        <div class="flex items-center gap-2 mb-2">
                             <span class="text-xs text-zinc-500">₱</span>
                             <input id="detailInvestInput" type="number" min="100" step="100" value="5000"
                                 class="w-full px-2 py-1.5 text-sm font-semibold rounded focus:outline-none focus:ring-1 focus:ring-zinc-400"
                                 aria-label="Investment amount in pesos">
                         </div>
-                        <p id="detailForecastResult" class="text-sm font-semibold text-zinc-900 mt-2">--</p>
-                        <p id="detailForecastMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">Enter an amount to estimate the same % move as this chart range. Educational only.</p>
+                        <div id="forecastHorizonButtons" class="flex flex-wrap gap-1 mb-2"></div>
+                        <p id="detailForecastResult" class="text-sm font-semibold text-zinc-900 mt-1">--</p>
+                        <p id="detailForecastBand" class="text-[11px] text-zinc-500 mt-1">--</p>
+                        <p id="detailForecastMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">Pick a horizon. Educational quant-style projection — not a guaranteed profit.</p>
                     </div>
                     <div class="bg-white border border-zinc-200 rounded-lg shadow-sm flex flex-col">
                         <div class="px-5 py-4 border-b border-zinc-100 bg-zinc-50/50">

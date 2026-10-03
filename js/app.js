@@ -308,6 +308,14 @@ class TradingAssistantApp {
         }
     }
 
+    setForecastHorizon(horizonId) {
+        const allowed = (CONFIG.forecastHorizons || []).some(h => h.id === horizonId);
+        if (!allowed) return;
+        this.state.forecastHorizon = horizonId;
+        this.ui.syncForecastHorizonButtons();
+        this.ui.updateInvestmentForecast();
+    }
+
     async changeRange(range) {
         if (this.state.chartBusy) return;
         if (range === this.state.activeRange) return;

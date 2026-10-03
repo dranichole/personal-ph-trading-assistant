@@ -37,7 +37,7 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Smooth fade tooltips on indicator tiles and key labels
 - **GCash Pre-IPO forecast** card: official final IPO **₱6.60**, listing **Oct 20, 2026**, valuation ~**₱442B**; simulated pre-listing path around that price until live `GCASH.PS` data exists; AI receives Mynt filing/earnings context
 - **On-site alerts** (free): always-visible alert strip; banner when a name dips ≥3% or rises ≥3% vs prior close; **Enable** + **Test alert** for browser notifications; on-page toast so you can verify without waiting for a real move
-- **If I invested** on detail view: enter a peso amount; app estimates the same % move as the selected chart range (educational replay, not a prediction)
+- **Horizon projection** on detail view: enter ₱ amount + pick 1W / 1M / 3M / 6M / 1Y; projects from live trailing returns, rolling window averages, SMA20 alignment, and volatility bands (educational quant-style model — not a guaranteed profit)
 ### AI mentor
 - Runs through **`/api/analyze`** so `GEMINI_API_KEY` stays in Vercel env vars
 - Prompt includes price change, indicators, recent closes, and whether data is live or simulated

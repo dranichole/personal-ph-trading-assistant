@@ -157,10 +157,150 @@ export function summarizeBars(bars) {
     };
 }
 
+/** Trading days used for each projection horizon. */
+export const FORECAST_HORIZONS = [
+    { id: '5d', label: '1W', days: 5 },
+    { id: '1mo', label: '1M', days: 22 },
+    { id: '3mo', label: '3M', days: 63 },
+    { id: '6mo', label: '6M', days: 126 },
+    { id: '1y', label: '1Y', days: 252 }
+];
+
+function horizonMeta(horizonId) {
+    return FORECAST_HORIZONS.find(h => h.id === horizonId) || FORECAST_HORIZONS[1];
+}
+
+function dailyReturns(closes) {
+    const out = [];
+    for (let i = 1; i < closes.length; i++) {
+        const a = closes[i - 1];
+        const b = closes[i];
+        if (a > 0 && Number.isFinite(a) && Number.isFinite(b)) out.push((b - a) / a);
+    }
+    return out;
+}
+
+function mean(arr) {
+    if (!arr.length) return null;
+    return arr.reduce((s, x) => s + x, 0) / arr.length;
+}
+
+function stdev(arr) {
+    if (arr.length < 2) return null;
+    const m = mean(arr);
+    const v = arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1);
+    return Math.sqrt(v);
+}
+
 /**
- * Educational “if I invested ₱X” projection using the selected range’s % change.
- * Not a prediction — replays the observed move on a cash amount.
+ * Data-driven horizon projection from actual OHLCV closes.
+ * Uses trailing / rolling returns + daily volatility, scaled to the chosen horizon
+ * when fewer bars than a full window are available (common on phisix-limited feeds).
  */
+export function projectHorizonInvestment(bars, investPesos, horizonId = '1mo') {
+    const amount = Number(investPesos);
+    const horizon = horizonMeta(horizonId);
+    const closes = (bars || []).map(b => Number(b.close)).filter(c => Number.isFinite(c) && c > 0);
+    const price = closes.length ? closes[closes.length - 1] : null;
+    const availableDays = Math.max(0, closes.length - 1);
+    const minDays = 15;
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+        return { ok: false, note: 'Enter a positive peso amount.' };
+    }
+    if (availableDays < minDays) {
+        return {
+            ok: false,
+            note: `Need at least ${minDays} trading days of live history (have ${availableDays}).`
+        };
+    }
+
+    // Use the longest window we actually have, then scale drift/vol to the target horizon.
+    const observeDays = Math.min(horizon.days, availableDays);
+    const window = closes.slice(-(observeDays + 1));
+    const start = window[0];
+    const end = window[window.length - 1];
+    const observeReturn = (end - start) / start;
+    const scale = horizon.days / observeDays;
+    const scaledTrail = observeReturn * scale;
+
+    // Rolling windows at the observed length (not the full horizon if history is short)
+    const step = Math.max(1, Math.floor(observeDays / 4));
+    const rolling = [];
+    for (let i = closes.length - 1; i - observeDays >= 0; i -= step) {
+        const a = closes[i - observeDays];
+        const b = closes[i];
+        if (a > 0) rolling.push(((b - a) / a) * scale);
+        if (rolling.length >= 12) break;
+    }
+    const rollMean = mean(rolling);
+    const expectedReturn =
+        rollMean == null ? scaledTrail : 0.65 * scaledTrail + 0.35 * rollMean;
+
+    const rets = dailyReturns(closes.slice(-Math.max(observeDays * 2, 40)));
+    const dailyVol = stdev(rets) ?? 0;
+    const horizonVol = dailyVol * Math.sqrt(horizon.days);
+
+    const sma20Series = sma(closes, 20);
+    const sma20 = lastDefined(sma20Series);
+    let trendAdj = 1;
+    let trendNote = 'neutral vs SMA20';
+    if (sma20 != null) {
+        const above = end >= sma20;
+        if (expectedReturn > 0 && above) {
+            trendAdj = 1.05;
+            trendNote = 'price above SMA20 supports upside bias';
+        } else if (expectedReturn > 0 && !above) {
+            trendAdj = 0.7;
+            trendNote = 'price below SMA20 dampens upside bias';
+        } else if (expectedReturn < 0 && !above) {
+            trendAdj = 1.05;
+            trendNote = 'price below SMA20 supports downside bias';
+        } else if (expectedReturn < 0 && above) {
+            trendAdj = 0.7;
+            trendNote = 'price above SMA20 dampens downside bias';
+        }
+    }
+
+    const adjReturn = expectedReturn * trendAdj;
+    const lowReturn = adjReturn - horizonVol;
+    const highReturn = adjReturn + horizonVol;
+
+    const projected = amount * (1 + adjReturn);
+    const low = amount * (1 + lowReturn);
+    const high = amount * (1 + highReturn);
+    const gain = projected - amount;
+    const shares = price > 0 ? Math.floor(amount / price) : null;
+    const scaledNote =
+        observeDays < horizon.days
+            ? ` Scaled from ${observeDays} available sessions to ${horizon.label}.`
+            : '';
+
+    return {
+        ok: true,
+        amount,
+        horizonId: horizon.id,
+        horizonLabel: horizon.label,
+        horizonDays: horizon.days,
+        observeDays,
+        scaled: observeDays < horizon.days,
+        price,
+        shares,
+        trailPct: parseFloat((scaledTrail * 100).toFixed(2)),
+        expectedPct: parseFloat((adjReturn * 100).toFixed(2)),
+        volPct: parseFloat((horizonVol * 100).toFixed(2)),
+        projected: parseFloat(projected.toFixed(2)),
+        low: parseFloat(low.toFixed(2)),
+        high: parseFloat(high.toFixed(2)),
+        gain: parseFloat(gain.toFixed(2)),
+        sampleWindows: rolling.length,
+        trendNote,
+        method:
+            `Trailing/rolling returns from live closes + SMA20 tilt; ±1σ from daily vol × √${horizon.days}.${scaledNote}`
+    };
+}
+
+/** @deprecated use projectHorizonInvestment */
 export function forecastInvestment(investPesos, pctChange, latestClose) {
     const amount = Number(investPesos);
     const pct = Number(pctChange);
