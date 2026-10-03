@@ -19,9 +19,11 @@ class TradingAssistantApp {
         this.state.setTheme(this.state.theme);
         this.ui.syncThemeToggle();
         this.ui.syncWatchlistControls();
+        this.ui.syncAlertControls();
         this.ui.renderDashboard();
         this.ui.renderJournal();
         await this.loadDashboardData();
+        this.evaluateAlerts({ notifyBrowser: false });
         this.startAutoRefresh();
     }
 
@@ -69,10 +71,22 @@ class TradingAssistantApp {
         });
     }
 
-    async quietRefresh() {
-        if (this.state.refreshInFlight || this.state.chartBusy || document.hidden) return;
+    async quietRefresh({ manual = false } = {}) {
+        if (this.state.refreshInFlight || this.state.chartBusy) return;
+        if (!manual && document.hidden) return;
         this.state.refreshInFlight = true;
         this.ui.setRefreshStatus('Refreshing…');
+        this.ui.setRefreshBusy(true);
+
+        const onDetail = this.state.currentView === 'detail' && this.state.activeStock;
+        if (manual) {
+            if (onDetail) {
+                this.ui.setChartBusy(true, 'Refreshing chart…');
+            } else if (this.state.currentView === 'dashboard') {
+                this.ui.setRefreshStatus('Refreshing charts…');
+            }
+        }
+
         try {
             await Promise.all(
                 this.state.watchlist.map(stock =>
@@ -80,7 +94,7 @@ class TradingAssistantApp {
                 )
             );
 
-            if (this.state.currentView === 'detail' && this.state.activeStock) {
+            if (onDetail) {
                 await this.ensureSnapshot(
                     this.state.activeStock.ticker,
                     this.state.activeRange,
@@ -93,17 +107,111 @@ class TradingAssistantApp {
 
             if (this.state.currentView === 'dashboard') {
                 this.ui.renderDashboard();
-            } else if (this.state.currentView === 'detail' && this.state.activeStock && !this.state.chartBusy) {
+            } else if (onDetail) {
                 const snap = this.state.getSnapshot(this.state.activeStock.ticker, this.state.activeRange);
                 if (snap) this.ui.showDetails(this.state.activeStock, snap, { soft: true });
             }
+            this.evaluateAlerts({ notifyBrowser: true });
         } catch (error) {
             console.warn('Quiet refresh failed:', error);
-            this.ui.setRefreshStatus('Refresh failed — will try again');
+            this.ui.setRefreshStatus('Refresh failed. Try again');
         } finally {
             this.state.refreshInFlight = false;
+            if (manual && onDetail) this.ui.setChartBusy(false);
+            this.ui.setRefreshBusy(false);
             this.ui.updateRefreshIndicator();
         }
+    }
+
+    async manualRefresh() {
+        await this.quietRefresh({ manual: true });
+    }
+
+    evaluateAlerts({ notifyBrowser = false } = {}) {
+        const buyThr = CONFIG.alerts.buyDipPct;
+        const sellThr = CONFIG.alerts.sellRisePct;
+        const day = this.state.alertDayKey();
+        const fresh = [];
+
+        for (const stock of this.state.watchlist) {
+            const snap = this.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
+            if (!snap?.bars || snap.bars.length < 2) continue;
+            const prev = snap.bars[snap.bars.length - 2].close;
+            const last = snap.bars[snap.bars.length - 1].close;
+            if (!prev) continue;
+            const dayPct = ((last - prev) / prev) * 100;
+            const label = stock.preIpo ? `${stock.name} (pre-listing)` : stock.ticker;
+
+            if (dayPct <= buyThr) {
+                const key = `${stock.ticker}|buy|${day}`;
+                const alert = {
+                    key,
+                    type: 'buy',
+                    ticker: stock.ticker,
+                    title: `Buy watch · ${label}`,
+                    body: `Down ${dayPct.toFixed(2)}% vs prior close (₱${last.toFixed(2)}). Significant dip vs your −${Math.abs(buyThr)}% alert.`
+                };
+                fresh.push(alert);
+                if (notifyBrowser && !this.state.wasAlertFired(key)) {
+                    this.state.markAlertFired(key);
+                    this.maybeBrowserNotify(alert);
+                }
+            } else if (dayPct >= sellThr) {
+                const key = `${stock.ticker}|sell|${day}`;
+                const alert = {
+                    key,
+                    type: 'sell',
+                    ticker: stock.ticker,
+                    title: `Sell watch · ${label}`,
+                    body: `Up +${dayPct.toFixed(2)}% vs prior close (₱${last.toFixed(2)}). Significant rise vs your +${sellThr}% alert.`
+                };
+                fresh.push(alert);
+                if (notifyBrowser && !this.state.wasAlertFired(key)) {
+                    this.state.markAlertFired(key);
+                    this.maybeBrowserNotify(alert);
+                }
+            }
+        }
+
+        this.state.activeAlerts = fresh;
+        this.ui.renderAlerts(fresh);
+    }
+
+    maybeBrowserNotify(alert) {
+        if (!this.state.browserAlertsEnabled) return;
+        if (typeof Notification === 'undefined') return;
+        if (Notification.permission !== 'granted') return;
+        try {
+            new Notification(alert.title, {
+                body: alert.body,
+                tag: alert.key
+            });
+        } catch (error) {
+            console.warn('Browser notification failed:', error);
+        }
+    }
+
+    async enableBrowserAlerts() {
+        if (typeof Notification === 'undefined') {
+            this.ui.setWatchlistMessage('This browser does not support notifications.', true);
+            return;
+        }
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+            this.state.setBrowserAlertsEnabled(true);
+            this.ui.syncAlertControls();
+            this.ui.setWatchlistMessage('Browser alerts on. You will get a notice on large dips or rises when this tab refreshes data.');
+            this.evaluateAlerts({ notifyBrowser: true });
+        } else {
+            this.state.setBrowserAlertsEnabled(false);
+            this.ui.syncAlertControls();
+            this.ui.setWatchlistMessage('Browser alerts were not allowed. In-app banners still work.', true);
+        }
+    }
+
+    dismissAlerts() {
+        this.state.activeAlerts = [];
+        this.ui.renderAlerts([]);
     }
 
     async openDetails(ticker) {

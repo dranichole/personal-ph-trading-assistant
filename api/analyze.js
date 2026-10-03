@@ -30,29 +30,35 @@ module.exports = async function(req, res) {
             Boolean(preIpo);
 
         const filing = preIpo || {
-            listingTarget: 'October 2026',
-            offerLow: 8.0,
-            offerHigh: 10.0,
+            listingTarget: 'October 20, 2026',
+            offerPeriod: 'October 6–12, 2026',
+            finalOfferPrice: 6.60,
+            offerLow: 6.0,
+            offerHigh: 7.5,
+            priorBandLow: 8.0,
+            priorBandHigh: 10.0,
             netIncome2025B: 17.2,
             netIncomeQ12026B: 5.6,
-            impliedValuationUpToB: 669,
+            impliedValuationB: 442,
+            priorMaxValuationB: 669,
             issuer: 'Mynt (GCash)'
         };
 
         let dataNote;
         if (isGCashPreIpo) {
-            dataNote = `CRITICAL: This is a SIMULATED Pre-IPO forecast for GCash / Mynt. It is NOT a listed PSE stock and must never be described as a live quote.
-Mynt / GCash IPO context (educational, from reported filing narrative):
-- Target listing window: ${filing.listingTarget || 'October 2026'}
-- Indicative offer price band: ₱${filing.offerLow ?? 8} to ₱${filing.offerHigh ?? 10}
+            dataNote = `CRITICAL: This is a SIMULATED pre-listing forecast for GCash / Mynt (ticker GCASH). It is NOT live PSE trading until listing. Never describe the chart as a live quote.
+Official IPO facts (Globe/PSE disclosures, Oct 1–2 2026):
+- Final offer price: ₱${filing.finalOfferPrice ?? 6.60} per share
+- Retail offer period: ${filing.offerPeriod || 'October 6–12, 2026'}
+- Scheduled PSE listing: ${filing.listingTarget || 'October 20, 2026'} under GCASH
+- Implied valuation at final price: about ₱${filing.impliedValuationB ?? 442} billion (prior max indication was up to about ₱${filing.priorMaxValuationB ?? 669} billion at ₱${filing.priorBandHigh ?? 10})
 - Net income 2025: ₱${filing.netIncome2025B ?? 17.2} billion
 - Net income Q1 2026: ₱${filing.netIncomeQ12026B ?? 5.6} billion
-- Implied valuation (up to): ₱${filing.impliedValuationUpToB ?? 669} billion
-The chart is a hypothetical path if the name already traded near that IPO band, with mild upward drift reflecting strong earnings. Prefer Hold or Neutral for "action" unless framing a classroom IPO-watch thesis. Always say Pre-IPO / simulated.`;
+The chart models market expectations around the ₱6.60 final price (priced below the earlier ₱8–₱10 indication), with earnings support and mean reversion to the offer. Prefer Hold/Neutral unless framing an educational IPO-watch thesis. Always say pre-listing / simulated.`;
         } else if (dataSource === 'simulated') {
             dataNote = 'WARNING: Price series is SIMULATED fallback data, not live PSE quotes. Be conservative and prefer Hold unless the user thesis is independent of this chart.';
         } else {
-            dataNote = 'Price series is from live Yahoo Finance data (PSE).';
+            dataNote = 'Price series is from live PSE market data (Edge / phisix), in PHP.';
         }
 
         const listingLabel = isGCashPreIpo

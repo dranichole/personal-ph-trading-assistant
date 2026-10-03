@@ -11,7 +11,7 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 | Frontend | Vanilla JavaScript (ES6 modules), HTML5 |
 | Styling | Tailwind CSS (CDN) + `css/styles.css` theme tokens |
 | Charts | Chart.js (line sparklines on the watchlist; candles + trend overlays on detail) |
-| Market data | Yahoo Finance chart API via allorigins proxy; simulated OHLCV fallback if blocked |
+| Market data | `/api/quote` → PSE Edge daily OHLC (PHP); phisix closes as fallback; simulated only if all live sources fail |
 | AI | Google Gemini (server-side via `/api/analyze`) |
 | Hosting | Static files + Vercel serverless function |
 
@@ -35,8 +35,8 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Clear “last close” wording (ending market price, not a sale price)
 - Educational **starter buy idea** (example size near support using a fixed practice risk budget)
 - Smooth fade tooltips on indicator tiles and key labels
-- **GCash Pre-IPO forecast** card: hypothetical listed path near Mynt’s indicated ₱8–₱10 offer band, labeled simulated / not listed; AI receives 2025 / Q1 2026 earnings and valuation context from filing narrative
-
+- **GCash Pre-IPO forecast** card: official final IPO **₱6.60**, listing **Oct 20, 2026**, valuation ~**₱442B**; simulated pre-listing path around that price until live `GCASH.PS` data exists; AI receives Mynt filing/earnings context
+- **On-site alerts** (free): banner when a name dips ≥3% or rises ≥3% vs prior close; optional browser notifications while you have the site open
 ### AI mentor
 - Runs through **`/api/analyze`** so `GEMINI_API_KEY` stays in Vercel env vars
 - Prompt includes price change, indicators, recent closes, and whether data is live or simulated
@@ -56,14 +56,15 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 ```text
 trading_assistant/
 ├── api/
-│   └── analyze.js       # Vercel serverless Gemini proxy
+│   ├── analyze.js       # Vercel serverless Gemini proxy
+│   └── quote.js         # Vercel serverless PSE Edge / phisix proxy
 ├── css/
 │   └── styles.css       # Theme tokens, tooltips, loaders
 ├── js/
 │   ├── app.js           # Bootstrap, refresh, chart/theme flow
 │   ├── config.js        # Watchlist defaults, ranges, endpoints
 │   ├── indicators.js    # SMA, RSI, ATR, S/R, starter buy helper
-│   ├── services.js      # Yahoo fetch + AI client
+│   ├── services.js      # Market data + AI client
 │   ├── state.js         # Cache, watchlist/journal persistence, theme
 │   └── ui.js            # DOM + Chart.js
 ├── index.html
@@ -101,7 +102,9 @@ Charts, indicators, watchlist, journal, and themes work without the AI key.
 
 1. Connect the repo to [Vercel](https://vercel.com).
 2. Set environment variable **`GEMINI_API_KEY`**.
-3. Deploy. Static files are served from the root; `api/analyze.js` becomes `/api/analyze`.
+3. Deploy. Static files are served from the root; `api/analyze.js` → `/api/analyze`, `api/quote.js` → `/api/quote`.
+
+Market data prefers `/api/quote` (PSE Edge OHLC in pesos). On a plain local static server without that route, the client falls back to phisix daily closes (still live PHP prices; OHLC may be flattened). **Simulated** means every live path failed.
 
 ## Privacy notes
 
@@ -111,7 +114,7 @@ Charts, indicators, watchlist, journal, and themes work without the AI key.
 | Journal | Browser `localStorage` |
 | Theme | Browser `localStorage` |
 | Gemini key | Vercel env only (never in the frontend bundle) |
-| Market prices | Fetched from Yahoo (via proxy); may fall back to **Simulated** practice series |
+| Market prices | PSE Edge via `/api/quote` (phisix fallback locally); **Simulated** only if all live sources fail |
 
 Clearing site data for this origin resets watchlist, journal, and theme on that device.
 

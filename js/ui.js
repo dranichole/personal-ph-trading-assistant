@@ -75,12 +75,17 @@ export class UIController {
             chartLoadingOverlay: document.getElementById('chartLoadingOverlay'),
             chartLoadingText: document.getElementById('chartLoadingText'),
             lastRefreshLabel: document.getElementById('lastRefreshLabel'),
+            manualRefreshBtn: document.getElementById('manualRefreshBtn'),
             detailPurchaseAmount: document.getElementById('detailPurchaseAmount'),
             detailPurchaseMeta: document.getElementById('detailPurchaseMeta'),
             themeToggle: document.getElementById('themeToggle'),
             preIpoBanner: document.getElementById('preIpoBanner'),
             preIpoBannerText: document.getElementById('preIpoBannerText'),
-            preIpoFilingFacts: document.getElementById('preIpoFilingFacts')
+            preIpoFilingFacts: document.getElementById('preIpoFilingFacts'),
+            alertBar: document.getElementById('alertBar'),
+            alertList: document.getElementById('alertList'),
+            enableNotifBtn: document.getElementById('enableNotifBtn'),
+            dismissAlertsBtn: document.getElementById('dismissAlertsBtn')
         };
 
         this.setupEventListeners();
@@ -119,6 +124,9 @@ export class UIController {
             const next = this.app.state.theme === 'night' ? 'day' : 'night';
             this.app.setTheme(next);
         });
+        this.els.manualRefreshBtn?.addEventListener('click', () => this.app.manualRefresh());
+        this.els.enableNotifBtn?.addEventListener('click', () => this.app.enableBrowserAlerts());
+        this.els.dismissAlertsBtn?.addEventListener('click', () => this.app.dismissAlerts());
         this.els.chartStyleButtons.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-chart-style]');
             if (btn) this.app.setChartStyle(btn.getAttribute('data-chart-style'));
@@ -353,13 +361,59 @@ export class UIController {
         const at = this.app.state.lastRefreshedAt;
         if (!at) {
             this.els.lastRefreshLabel.textContent = 'Waiting for first price load…';
+        } else {
+            const time = new Date(at).toLocaleTimeString('en-PH', {
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+            this.els.lastRefreshLabel.textContent = `Last refreshed ${time}`;
+        }
+        this.setRefreshBusy(this.app.state.refreshInFlight);
+    }
+
+    setRefreshBusy(busy) {
+        const btn = this.els.manualRefreshBtn;
+        if (!btn) return;
+        btn.disabled = Boolean(busy);
+        btn.classList.toggle('is-spinning', Boolean(busy));
+    }
+
+    syncAlertControls() {
+        const btn = this.els.enableNotifBtn;
+        if (!btn) return;
+        const supported = typeof Notification !== 'undefined';
+        if (!supported) {
+            btn.textContent = 'Alerts unsupported';
+            btn.disabled = true;
             return;
         }
-        const time = new Date(at).toLocaleTimeString('en-PH', {
-            hour: 'numeric',
-            minute: '2-digit'
-        });
-        this.els.lastRefreshLabel.textContent = `Last refreshed ${time}`;
+        if (Notification.permission === 'granted' && this.app.state.browserAlertsEnabled) {
+            btn.textContent = 'Browser alerts on';
+            btn.disabled = true;
+        } else if (Notification.permission === 'denied') {
+            btn.textContent = 'Alerts blocked';
+            btn.disabled = true;
+        } else {
+            btn.textContent = 'Enable browser alerts';
+            btn.disabled = false;
+        }
+    }
+
+    renderAlerts(alerts) {
+        if (!this.els.alertBar || !this.els.alertList) return;
+        if (!alerts?.length) {
+            this.els.alertBar.classList.add('hidden');
+            this.els.alertList.innerHTML = '';
+            return;
+        }
+        this.els.alertBar.classList.remove('hidden');
+        this.els.alertList.innerHTML = alerts.map(a => `
+            <p class="text-xs leading-snug ${a.type === 'buy' ? 'alert-item-buy' : 'alert-item-sell'}">
+                <span class="font-semibold">${escapeHtml(a.title)}</span>
+                <span class="text-zinc-600"> · ${escapeHtml(a.body)}</span>
+            </p>
+        `).join('');
+        this.syncAlertControls();
     }
 
     formatPurchaseLine(purchase) {
@@ -404,8 +458,8 @@ export class UIController {
                 </div>
                 ${isPreIpo ? `
                 <div class="mb-3 p-2 rounded border border-amber-100 bg-amber-50">
-                    <p class="text-[9px] font-bold uppercase tracking-widest text-amber-800">Pre-IPO forecast · not listed</p>
-                    <p class="text-[10px] text-zinc-600 mt-1 leading-snug">Hypothetical path if GCash already traded near the ₱${filing.offerLow.toFixed(2)}–₱${filing.offerHigh.toFixed(2)} IPO band. Target listing ${escapeHtml(filing.listingTarget)}.</p>
+                    <p class="text-[9px] font-bold uppercase tracking-widest text-amber-800">Final IPO ₱${Number(filing.finalOfferPrice).toFixed(2)} · not listed yet</p>
+                    <p class="text-[10px] text-zinc-600 mt-1 leading-snug">Pre-listing forecast around the official ₱${Number(filing.finalOfferPrice).toFixed(2)} price. Offer ${escapeHtml(filing.offerPeriod || '')}. Listing ${escapeHtml(filing.listingTarget)}.</p>
                 </div>` : ''}
                 <div class="flex justify-between items-end mb-2">
                     <div class="has-tip">
@@ -432,14 +486,14 @@ export class UIController {
                         source === 'live' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
                     }">${source === 'live' ? 'Live' : 'Simulated'}<span class="tip-bubble">${
                         source === 'live'
-                            ? 'Prices came from Yahoo Finance for the PSE.'
-                            : 'Live quotes were unavailable, so this is practice data only.'
+                            ? 'Prices from PSE Edge (or phisix fallback) in Philippine pesos.'
+                            : 'Live quotes failed, so this is practice data only.'
                     }</span></span>` : ''}
                 </div>
                 ${isPreIpo && filing ? `
                 <div class="mb-3 bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2 text-[10px] text-zinc-600 space-y-0.5">
+                    <p>Final IPO: ₱${Number(filing.finalOfferPrice).toFixed(2)} · valuation ~₱${filing.impliedValuationB}B</p>
                     <p>NI 2025: ₱${filing.netIncome2025B}B · Q1 2026: ₱${filing.netIncomeQ12026B}B</p>
-                    <p>Implied valuation up to ₱${filing.impliedValuationUpToB}B</p>
                 </div>` : ''}
                 ${purchase && !isPreIpo ? `
                 <div class="mb-3 has-tip bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2">
@@ -885,7 +939,7 @@ export class UIController {
         this.els.detailPctChange.className = `text-sm font-semibold mt-1 ${up ? 'text-emerald-600' : 'text-red-600'}`;
         this.els.detailDataMeta.textContent = isPreIpo
             ? `Pre-IPO simulation · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`
-            : `${snapshot.source === 'live' ? 'Live Yahoo/PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
+            : `${snapshot.source === 'live' ? 'Live PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
 
         const purchase = this.formatPurchaseLine(stats.purchase);
         if (this.els.detailPurchaseAmount) this.els.detailPurchaseAmount.textContent = purchase.amount;
@@ -899,12 +953,14 @@ export class UIController {
             this.els.preIpoBanner.classList.toggle('hidden', !isPreIpo);
             if (isPreIpo && filing && this.els.preIpoBannerText) {
                 this.els.preIpoBannerText.textContent =
-                    'This chart is not a PSE listing. It is a classroom forecast of how GCash might trade if it already existed inside Mynt’s indicated IPO band, using reported earnings for momentum context.';
+                    `Official final IPO price is ₱${Number(filing.finalOfferPrice).toFixed(2)} (set Oct 1–2, 2026). This chart is still a pre-listing forecast of market expectations around that price, using Mynt’s disclosed earnings. Live PSE quotes appear here only after GCASH starts trading.`;
                 this.els.preIpoFilingFacts.innerHTML = `
-                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Listing target</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.listingTarget)}</p></div>
-                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Offer band</p><p class="font-semibold text-zinc-800">₱${filing.offerLow.toFixed(2)} – ₱${filing.offerHigh.toFixed(2)}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Final IPO price</p><p class="font-semibold text-zinc-800">₱${Number(filing.finalOfferPrice).toFixed(2)}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Listing date</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.listingTarget)}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Offer period</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.offerPeriod || '—')}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Valuation @ IPO</p><p class="font-semibold text-zinc-800">~₱${filing.impliedValuationB}B</p></div>
                     <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">NI 2025 / Q1’26</p><p class="font-semibold text-zinc-800">₱${filing.netIncome2025B}B / ₱${filing.netIncomeQ12026B}B</p></div>
-                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Valuation up to</p><p class="font-semibold text-zinc-800">₱${filing.impliedValuationUpToB}B</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Prior indication</p><p class="font-semibold text-zinc-800">Up to ₱${filing.priorBandHigh?.toFixed?.(2) || filing.priorBandHigh} (~₱${filing.priorMaxValuationB}B)</p></div>
                 `;
             }
         }

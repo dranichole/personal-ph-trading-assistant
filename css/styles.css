@@ -146,6 +146,42 @@ header.sticky {
     height: 1.05rem;
 }
 
+.refresh-btn {
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+.refresh-btn svg {
+    width: 0.75rem;
+    height: 0.75rem;
+}
+.refresh-btn:hover {
+    color: var(--ink);
+    border-color: var(--muted);
+}
+.refresh-btn:disabled {
+    opacity: 0.45;
+    cursor: wait;
+}
+#alertBar {
+    background: color-mix(in srgb, var(--card) 92%, var(--accent-2));
+}
+.alert-item-buy {
+    color: var(--up);
+}
+.alert-item-sell {
+    color: var(--down);
+}
+
 .brand-mark {
     width: 0.55rem;
     height: 0.55rem;

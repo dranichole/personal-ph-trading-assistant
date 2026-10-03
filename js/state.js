@@ -37,6 +37,9 @@ export class AppState {
         this.lastRefreshedAt = null;
         this.refreshInFlight = false;
         this.theme = this.loadTheme();
+        this.activeAlerts = [];
+        this.alertLog = readJson(CONFIG.storageKeys.alertLog, {});
+        this.browserAlertsEnabled = localStorage.getItem('ta_browser_alerts') === '1';
     }
 
     loadTheme() {
@@ -192,5 +195,29 @@ export class AppState {
 
     registerChart(canvasId, chartInstance) {
         this.chartInstances[canvasId] = chartInstance;
+    }
+
+    alertDayKey() {
+        const d = new Date();
+        return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    }
+
+    wasAlertFired(key) {
+        return Boolean(this.alertLog[key]);
+    }
+
+    markAlertFired(key) {
+        this.alertLog[key] = Date.now();
+        // Keep log small: drop entries older than 14 days
+        const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+        Object.keys(this.alertLog).forEach(k => {
+            if (this.alertLog[k] < cutoff) delete this.alertLog[k];
+        });
+        writeJson(CONFIG.storageKeys.alertLog, this.alertLog);
+    }
+
+    setBrowserAlertsEnabled(on) {
+        this.browserAlertsEnabled = Boolean(on);
+        localStorage.setItem('ta_browser_alerts', on ? '1' : '0');
     }
 }

@@ -52,11 +52,32 @@
                 </nav>
                 <div class="text-right">
                     <div class="text-sm font-medium text-zinc-500" id="currentDate"></div>
-                    <p id="lastRefreshLabel" class="text-[10px] text-zinc-500 mt-0.5">Prices update automatically</p>
+                    <div class="flex items-center justify-end gap-1.5 mt-0.5">
+                        <p id="lastRefreshLabel" class="text-[10px] text-zinc-500">Prices update automatically</p>
+                        <button type="button" id="manualRefreshBtn" class="refresh-btn" title="Refresh market data" aria-label="Refresh market data">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                                <path d="M21 3v6h-6"></path>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     </header>
+
+    <div id="alertBar" class="hidden border-b border-zinc-200">
+        <div class="max-w-7xl mx-auto px-6 py-3 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div class="flex-1 min-w-0">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Watchlist alerts</p>
+                <div id="alertList" class="space-y-1.5"></div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+                <button type="button" id="enableNotifBtn" class="text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1.5 rounded border border-zinc-200 text-zinc-600 hover:text-zinc-900">Enable browser alerts</button>
+                <button type="button" id="dismissAlertsBtn" class="text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1.5 rounded border border-zinc-200 text-zinc-600 hover:text-zinc-900">Dismiss</button>
+            </div>
+        </div>
+    </div>
 
     <main class="flex-grow max-w-7xl mx-auto px-6 py-8 w-full relative">
         

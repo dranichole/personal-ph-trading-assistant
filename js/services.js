@@ -5,7 +5,7 @@
  */
 import { CONFIG, GCASH_PRE_IPO } from './config.js';
 
-const FALLBACK_BASE = { SM: 950.00, JFC: 260.00, BDO: 155.00, ALI: 34.00, GLO: 2100.00 };
+const FALLBACK_BASE = { SM: 495.0, JFC: 142.0, BDO: 110.6, ALI: 15.14, GLO: 1554.0 };
 
 function formatBarDate(timestampSec) {
     return new Date(timestampSec * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -35,81 +35,253 @@ function daySeed(extra = 0) {
     return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate() + extra;
 }
 
-export class DataService {
-    static async fetchHistoricalData(ticker, range = CONFIG.dashboardRange) {
-        if (ticker === GCASH_PRE_IPO.ticker) {
-            return this.generateGCashPreIpoForecast(range);
-        }
+function manilaYmd(d = new Date()) {
+    return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+}
 
+function tradingDaysBack(count) {
+    const days = [];
+    const cursor = new Date();
+    let guard = 0;
+    while (days.length < count && guard < count * 3) {
+        guard += 1;
+        const ymd = manilaYmd(cursor);
+        const weekday = new Date(`${ymd}T12:00:00+08:00`).getDay();
+        if (weekday !== 0 && weekday !== 6) days.push(ymd);
+        cursor.setDate(cursor.getDate() - 1);
+    }
+    return days.reverse();
+}
+
+function normalizeBars(bars) {
+    return (bars || [])
+        .map((b) => {
+            const close = Number(b.close ?? b.price);
+            if (!Number.isFinite(close)) return null;
+            const open = Number.isFinite(Number(b.open)) ? Number(b.open) : close;
+            const high = Number.isFinite(Number(b.high)) ? Number(b.high) : Math.max(open, close);
+            const low = Number.isFinite(Number(b.low)) ? Number(b.low) : Math.min(open, close);
+            const timestamp = Number(b.timestamp) || Math.floor(Date.now() / 1000);
+            return {
+                date: b.date || formatBarDate(timestamp),
+                timestamp,
+                open: parseFloat(open.toFixed(4)),
+                high: parseFloat(high.toFixed(4)),
+                low: parseFloat(low.toFixed(4)),
+                close: parseFloat(close.toFixed(4)),
+                price: parseFloat(close.toFixed(4)),
+                volume: Number(b.volume) || 0
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+async function fetchJson(url, label) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        let detail = '';
         try {
-            const response = await fetch(CONFIG.apiProxyTemplate(ticker, range));
-            if (!response.ok) throw new Error('Proxy or Network error');
+            const body = await response.json();
+            detail = body.detail || body.error || '';
+        } catch {
+            /* ignore */
+        }
+        throw new Error(`${label} HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+    }
+    return response.json();
+}
 
-            const data = await response.json();
-            if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
-                throw new Error('No valid payload from Yahoo');
+/** Local/static fallback when `/api/quote` is not running (CORS-friendly phisix). */
+async function fetchPhisixSnapshot(ticker, range) {
+    const needed =
+        range === '5d' ? 5 :
+        range === '3mo' ? 40 :
+        range === '1y' ? 60 :
+        22;
+
+    const days = tradingDaysBack(needed);
+    const bars = [];
+    let name = ticker;
+
+    for (let i = 0; i < days.length; i += 5) {
+        const chunk = days.slice(i, i + 5);
+        const parts = await Promise.all(
+            chunk.map(async (ymd) => {
+                try {
+                    const data = await fetchJson(
+                        `https://phisix-api3.appspot.com/stocks/${encodeURIComponent(ticker)}.${ymd}.json`,
+                        'phisix'
+                    );
+                    const stock = data?.stocks?.[0];
+                    if (!stock?.price?.amount && stock?.price?.amount !== 0) return null;
+                    const close = Number(stock.price.amount);
+                    const asOf = data.as_of ? new Date(data.as_of) : new Date(`${ymd}T00:00:00+08:00`);
+                    return {
+                        name: stock.name,
+                        close,
+                        volume: Number(stock.volume) || 0,
+                        date: asOf
+                    };
+                } catch {
+                    return null;
+                }
+            })
+        );
+        parts.forEach((part) => {
+            if (!part || !Number.isFinite(part.close)) return;
+            name = part.name || name;
+            const close = parseFloat(part.close.toFixed(4));
+            const ts = Math.floor(part.date.getTime() / 1000);
+            bars.push({
+                date: formatBarDate(ts),
+                timestamp: ts,
+                open: close,
+                high: close,
+                low: close,
+                close,
+                price: close,
+                volume: part.volume
+            });
+        });
+    }
+
+    try {
+        const latest = await fetchJson(
+            `https://phisix-api3.appspot.com/stocks/${encodeURIComponent(ticker)}.json`,
+            'phisix'
+        );
+        const stock = latest?.stocks?.[0];
+        if (stock?.price?.amount != null) {
+            name = stock.name || name;
+            const close = parseFloat(Number(stock.price.amount).toFixed(4));
+            const asOf = latest.as_of ? new Date(latest.as_of) : new Date();
+            const ts = Math.floor(asOf.getTime() / 1000);
+            if (!bars.some((b) => b.timestamp === ts)) {
+                bars.push({
+                    date: formatBarDate(ts),
+                    timestamp: ts,
+                    open: close,
+                    high: close,
+                    low: close,
+                    close,
+                    price: close,
+                    volume: Number(stock.volume) || 0
+                });
             }
+        }
+    } catch {
+        /* keep whatever daily bars we have */
+    }
 
+    const sorted = normalizeBars(bars);
+    if (sorted.length < 2) throw new Error('Phisix insufficient history');
+
+    // Infer open/high/low from prior close when only EOD close is available.
+    const stitched = sorted.map((b, i) => {
+        const open = i > 0 ? sorted[i - 1].close : b.close;
+        return {
+            ...b,
+            open,
+            high: Math.max(open, b.close),
+            low: Math.min(open, b.close),
+            price: b.close
+        };
+    });
+
+    return {
+        ticker,
+        name,
+        bars: stitched,
+        source: 'live',
+        provider: 'phisix',
+        fetchedAt: Date.now(),
+        range,
+        note: 'Close/volume from phisix (local fallback)'
+    };
+}
+
+async function fetchLiveSnapshot(ticker, range) {
+    const errors = [];
+
+    try {
+        const data = await fetchJson(CONFIG.quoteApiUrl(ticker, range), 'quote API');
+        if (Array.isArray(data.bars) && data.bars.length) {
+            return {
+                ticker: data.ticker || ticker,
+                name: data.name || ticker,
+                bars: normalizeBars(data.bars),
+                source: 'live',
+                provider: data.provider || 'pse-edge',
+                fetchedAt: data.fetchedAt || Date.now(),
+                range,
+                note: data.note || null
+            };
+        }
+        // Legacy Yahoo payload shape (if an older proxy is still deployed)
+        if (data.chart?.result?.[0]) {
             const result = data.chart.result[0];
             const timestamps = result.timestamp || [];
             const quote = result.indicators?.quote?.[0] || {};
-            const closes = quote.close || [];
-            const opens = quote.open || [];
-            const highs = quote.high || [];
-            const lows = quote.low || [];
-            const volumes = quote.volume || [];
-
             const bars = [];
             for (let i = 0; i < timestamps.length; i++) {
-                if (closes[i] === null || closes[i] === undefined) continue;
-                const close = parseFloat(closes[i].toFixed(2));
-                const open = opens[i] != null ? parseFloat(opens[i].toFixed(2)) : close;
-                const high = highs[i] != null ? parseFloat(highs[i].toFixed(2)) : close;
-                const low = lows[i] != null ? parseFloat(lows[i].toFixed(2)) : close;
+                if (quote.close?.[i] == null) continue;
+                const close = parseFloat(Number(quote.close[i]).toFixed(4));
                 bars.push({
                     date: formatBarDate(timestamps[i]),
                     timestamp: timestamps[i],
-                    open,
-                    high,
-                    low,
+                    open: quote.open?.[i] != null ? parseFloat(Number(quote.open[i]).toFixed(4)) : close,
+                    high: quote.high?.[i] != null ? parseFloat(Number(quote.high[i]).toFixed(4)) : close,
+                    low: quote.low?.[i] != null ? parseFloat(Number(quote.low[i]).toFixed(4)) : close,
                     close,
                     price: close,
-                    volume: volumes[i] != null ? volumes[i] : 0
+                    volume: quote.volume?.[i] != null ? quote.volume[i] : 0
                 });
             }
-
-            if (!bars.length) throw new Error('Empty series after cleaning');
-
-            return {
-                ticker,
-                name: result.meta?.shortName || result.meta?.symbol || ticker,
-                bars,
-                source: 'live',
-                fetchedAt: Date.now(),
-                range
-            };
-        } catch (error) {
-            console.warn(`Fallback triggered for ${ticker} (${range}): ${error.message}`);
-            return this.generateFallbackData(ticker, range);
+            if (bars.length) {
+                return {
+                    ticker,
+                    name: result.meta?.shortName || ticker,
+                    bars: normalizeBars(bars),
+                    source: 'live',
+                    provider: 'yahoo',
+                    fetchedAt: Date.now(),
+                    range
+                };
+            }
         }
+        throw new Error('quote API returned no bars');
+    } catch (err) {
+        errors.push(err.message);
     }
 
+    try {
+        return await fetchPhisixSnapshot(ticker, range);
+    } catch (err) {
+        errors.push(err.message);
+    }
+
+    throw new Error(errors.join(' | '));
+}
+
+export class DataService {
     /**
-     * Hypothetical listed path for GCash if it already traded inside the IPO band.
-     * Anchored to offer ₱8–₱10, with mild upward drift from strong 2025 / Q1 2026 earnings.
+     * Pre-listing forecast around the official ₱6.60 IPO price.
+     * After listing, live GCASH can replace this when PSE Edge has a series.
      */
     static generateGCashPreIpoForecast(range = CONFIG.dashboardRange) {
-        const mid = (GCASH_PRE_IPO.offerLow + GCASH_PRE_IPO.offerHigh) / 2;
-        const rand = mulberry32(daySeed(rangeBarCount(range) * 17 + 2026));
-        let price = mid * (0.94 + rand() * 0.06);
+        const listing = GCASH_PRE_IPO.finalOfferPrice;
+        const floor = GCASH_PRE_IPO.offerLow;
+        const ceiling = GCASH_PRE_IPO.offerHigh;
+        const rand = mulberry32(daySeed(rangeBarCount(range) * 31 + 660));
+        let price = listing * (0.97 + rand() * 0.05);
         const bars = [];
         const today = new Date();
         const needed = rangeBarCount(range);
         let i = 0;
 
-        // Earnings momentum tilt: profitable 2025 + strong Q1 2026 → slight positive drift
-        const dailyDrift = 0.0012;
-        const vol = 0.018;
+        const dailyDrift = 0.0006;
+        const vol = 0.016;
 
         while (bars.length < needed) {
             const date = new Date(today);
@@ -117,16 +289,16 @@ export class DataService {
             i += 1;
             if (date.getDay() === 0 || date.getDay() === 6) continue;
 
-            const shock = (rand() - 0.48) * vol;
+            const shock = (rand() - 0.5) * vol;
+            const pullToList = (listing - price) * 0.08;
             const open = price;
-            let close = open * (1 + dailyDrift + shock);
-            // Soft gravity toward the IPO indication band
-            if (close < GCASH_PRE_IPO.offerLow) close += (GCASH_PRE_IPO.offerLow - close) * 0.35;
-            if (close > GCASH_PRE_IPO.offerHigh * 1.08) close -= (close - GCASH_PRE_IPO.offerHigh) * 0.25;
-            close = Math.min(GCASH_PRE_IPO.offerHigh * 1.12, Math.max(GCASH_PRE_IPO.offerLow * 0.9, close));
+            let close = open * (1 + dailyDrift + shock) + pullToList;
+            if (close < floor) close += (floor - close) * 0.4;
+            if (close > ceiling) close -= (close - ceiling) * 0.35;
+            close = Math.min(ceiling, Math.max(floor, close));
 
-            const high = Math.max(open, close) * (1 + rand() * 0.012);
-            const low = Math.min(open, close) * (1 - rand() * 0.012);
+            const high = Math.max(open, close) * (1 + rand() * 0.01);
+            const low = Math.min(open, close) * (1 - rand() * 0.01);
             price = close;
 
             bars.unshift({
@@ -137,7 +309,7 @@ export class DataService {
                 low: parseFloat(low.toFixed(2)),
                 close: parseFloat(close.toFixed(2)),
                 price: parseFloat(close.toFixed(2)),
-                volume: Math.round(2_500_000 + rand() * 4_500_000)
+                volume: Math.round(3_000_000 + rand() * 6_000_000)
             });
         }
 
@@ -151,6 +323,32 @@ export class DataService {
             fetchedAt: Date.now(),
             range
         };
+    }
+
+    static async fetchHistoricalData(ticker, range = CONFIG.dashboardRange) {
+        if (ticker === GCASH_PRE_IPO.ticker) {
+            try {
+                const live = await fetchLiveSnapshot(ticker, range);
+                if (live.bars.length >= 3) {
+                    return {
+                        ...live,
+                        preIpo: false,
+                        filing: { ...GCASH_PRE_IPO },
+                        name: live.name || GCASH_PRE_IPO.name
+                    };
+                }
+            } catch {
+                /* not listed yet */
+            }
+            return this.generateGCashPreIpoForecast(range);
+        }
+
+        try {
+            return await fetchLiveSnapshot(ticker, range);
+        } catch (error) {
+            console.warn(`Live data unavailable for ${ticker} (${range}): ${error.message}`);
+            return this.generateFallbackData(ticker, range);
+        }
     }
 
     static generateFallbackData(ticker, range = CONFIG.dashboardRange) {

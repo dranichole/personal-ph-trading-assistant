@@ -4,21 +4,31 @@
  * ==========================================
  */
 
-/** Educational Pre-IPO forecast card (not a listed PSE name). */
+/**
+ * Educational Pre-IPO / pre-listing forecast for Mynt (GCash).
+ * Final IPO price set at ₱6.60 (disclosed Oct 1–2, 2026). Listing targeted Oct 20, 2026.
+ * Not live PSE quotes until trading begins under ticker GCASH.
+ */
 export const GCASH_PRE_IPO = {
     ticker: 'GCASH',
     name: 'GCash (Mynt)',
     sector: 'Fintech · Pre-IPO',
     preIpo: true,
     locked: true,
-    listingTarget: 'October 2026',
-    offerLow: 8.0,
-    offerHigh: 10.0,
+    listingTarget: 'October 20, 2026',
+    offerPeriod: 'October 6–12, 2026',
+    finalOfferPrice: 6.60,
+    /** Soft discovery band used for simulated grey-market style path around the final price */
+    offerLow: 6.0,
+    offerHigh: 7.5,
+    priorBandLow: 8.0,
+    priorBandHigh: 10.0,
     netIncome2025B: 17.2,
     netIncomeQ12026B: 5.6,
-    impliedValuationUpToB: 669,
+    impliedValuationB: 442,
+    priorMaxValuationB: 669,
     issuer: 'Mynt (GCash)',
-    note: 'Simulated forecast only. GCash is not listed on the PSE yet. Series is modeled from disclosed IPO-band and earnings context for education.'
+    note: 'Simulated pre-listing forecast only. Final IPO price is ₱6.60. GCASH is not trading on the PSE until the scheduled listing. Series models market expectations around that price and Mynt’s disclosed earnings.'
 };
 
 export const CONFIG = {
@@ -40,7 +50,8 @@ export const CONFIG = {
     storageKeys: {
         watchlist: 'ta_watchlist_v1',
         journal: 'ta_journal_v1',
-        theme: 'ta_theme_v1'
+        theme: 'ta_theme_v1',
+        alertLog: 'ta_alert_log_v1'
     },
     ranges: [
         { id: '5d', label: '1W' },
@@ -52,6 +63,17 @@ export const CONFIG = {
     refreshMsOpen: 5 * 60 * 1000,
     refreshMsClosed: 30 * 60 * 1000,
     starterRiskPesos: 1000,
-    apiProxyTemplate: (ticker, range = '1mo') =>
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}.PS?interval=1d&range=${range}`)}`
+    /** Session / browser alerts (no email). Day-over-day % move thresholds. */
+    alerts: {
+        buyDipPct: -3,
+        sellRisePct: 3,
+        enabledByDefault: true
+    },
+    /**
+     * Primary live path: Vercel `/api/quote` → PSE Edge OHLC (PHP),
+     * with phisix daily closes as server/client fallback.
+     * Yahoo *.PS equity charts currently 404, so they are not used.
+     */
+    quoteApiUrl: (ticker, range = '1mo') =>
+        `/api/quote?ticker=${encodeURIComponent(ticker)}&range=${encodeURIComponent(range)}`
 };
