@@ -35,7 +35,8 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Clear “last close” wording (ending market price, not a sale price)
 - Educational **starter buy idea** (example size near support using a fixed practice risk budget)
 - Smooth fade tooltips on indicator tiles and key labels
-- **GCash Pre-IPO forecast** card: official final IPO **₱6.60**, listing **Oct 20, 2026**, valuation ~**₱442B**; simulated pre-listing path around that price until live `GCASH.PS` data exists; AI receives Mynt filing/earnings context
+- **GCash IPO offer** card: offer **open Oct 6–12, 2026** at **₱6.60** (min 100 sh via GCash/GStocks); listing targeted **Oct 20, 2026** as `GCASH`; educational pre-listing path until live PSE quotes exist; AI gets offer-window context
+- Dashboard **Sections** menu: checklist to show/hide section bands and drag to reorder (saved in this browser)
 - **On-site alerts** (free): always-visible alert strip; banner when a name dips ≥3% or rises ≥3% vs prior close; **Enable** + **Test alert** for browser notifications; on-page toast so you can verify without waiting for a real move
 - **Horizon projection** on detail view: enter ₱ amount + pick 1W / 1M / 3M / 6M / 1Y; projects from live trailing returns, rolling window averages, SMA20 alignment, and volatility bands (educational quant-style model — not a guaranteed profit)
 ### AI mentor

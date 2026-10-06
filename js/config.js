@@ -5,20 +5,24 @@
  */
 
 /**
- * Educational Pre-IPO / pre-listing forecast for Mynt (GCash).
- * Final IPO price set at ₱6.60 (disclosed Oct 1–2, 2026). Listing targeted Oct 20, 2026.
- * Not live PSE quotes until trading begins under ticker GCASH.
+ * Mynt / GCash IPO tracker.
+ * Offer period OPEN Oct 6–12, 2026 at ₱6.60. Listing targeted Oct 20, 2026 (ticker GCASH).
+ * Chart stays a pre-listing educational path until live GCASH.PS quotes exist after listing.
  */
 export const GCASH_PRE_IPO = {
     ticker: 'GCASH',
     name: 'GCash (Mynt)',
-    sector: 'Fintech · Pre-IPO',
+    sector: 'Fintech · IPO Offer',
     preIpo: true,
     locked: true,
+    phase: 'offer-open',
     listingTarget: 'October 20, 2026',
     offerPeriod: 'October 6–12, 2026',
+    offerOpen: true,
     finalOfferPrice: 6.60,
-    /** Soft discovery band used for simulated grey-market style path around the final price */
+    minSubscriptionShares: 100,
+    minSubscriptionPesos: 660,
+    subscribeVia: 'GCash / GStocks PH',
     offerLow: 6.0,
     offerHigh: 7.5,
     priorBandLow: 8.0,
@@ -28,7 +32,7 @@ export const GCASH_PRE_IPO = {
     impliedValuationB: 442,
     priorMaxValuationB: 669,
     issuer: 'Mynt (GCash)',
-    note: 'Simulated pre-listing forecast only. Final IPO price is ₱6.60. GCASH is not trading on the PSE until the scheduled listing. Series models market expectations around that price and Mynt’s disclosed earnings.'
+    note: 'IPO offer is open Oct 6–12, 2026 at ₱6.60 (min 100 shares / ₱660 via GCash GStocks PH). Shares are expected to list on the PSE Main Board as GCASH on Oct 20, 2026. Until then this card is an educational pre-listing path around the offer price — not a live PSE quote.'
 };
 
 /** Large, liquid PSE names commonly treated as blue chips. */
@@ -72,7 +76,7 @@ export const WATCHLIST_SECTIONS = [
     {
         id: 'other',
         title: 'Special & Custom',
-        blurb: 'Pre-IPO forecasts and tickers you add yourself.'
+        blurb: 'IPO watch (GCash offer open now) and tickers you add yourself.'
     }
 ];
 
@@ -99,7 +103,8 @@ export const CONFIG = {
         theme: 'ta_theme_v1',
         alertLog: 'ta_alert_log_v1',
         /** Bump when a new income seed batch should be offered once to existing users */
-        incomeSeedVersion: 'ta_income_seed_ver'
+        incomeSeedVersion: 'ta_income_seed_ver',
+        sectionLayout: 'ta_section_layout_v1'
     },
     /** Increment when adding a new auto-add income batch */
     incomeSeedVersion: 1,

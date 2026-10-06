@@ -141,7 +141,9 @@ class TradingAssistantApp {
             const last = snap.bars[snap.bars.length - 1].close;
             if (!prev) continue;
             const dayPct = ((last - prev) / prev) * 100;
-            const label = stock.preIpo ? `${stock.name} (pre-listing)` : stock.ticker;
+            const label = stock.preIpo
+                ? `${stock.name} (${CONFIG.gcashPreIpo?.offerOpen ? 'IPO offer' : 'pre-listing'})`
+                : stock.ticker;
 
             if (dayPct <= buyThr) {
                 const key = `${stock.ticker}|buy|${day}`;

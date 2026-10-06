@@ -110,6 +110,16 @@
                         <option value="name">Name</option>
                         <option value="sector">Sector</option>
                     </select>
+                    <div class="relative" id="sectionLayoutWrap">
+                        <button type="button" id="sectionLayoutBtn"
+                            class="px-3 py-2 text-xs border border-zinc-200 rounded bg-white text-zinc-600 hover:text-zinc-900 font-semibold">
+                            Sections
+                        </button>
+                        <div id="sectionLayoutMenu" class="section-layout-menu hidden" role="menu" aria-label="Dashboard sections">
+                            <p class="section-layout-menu__hint">Show sections and drag to reorder</p>
+                            <ul id="sectionLayoutList" class="section-layout-list"></ul>
+                        </div>
+                    </div>
                 </div>
             </div>
             <p id="watchlistMessage" class="hidden mb-4 text-xs text-zinc-500"></p>

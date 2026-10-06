@@ -215,6 +215,79 @@ header.sticky {
     border: 1px solid var(--line);
 }
 
+.section-layout-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.35rem);
+    z-index: 40;
+    width: min(20rem, 85vw);
+    padding: 0.75rem;
+    border-radius: 0.85rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+    box-shadow: var(--shadow);
+}
+
+.section-layout-menu__hint {
+    margin: 0 0 0.6rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+}
+
+.section-layout-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.section-layout-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.5rem;
+    border-radius: 0.55rem;
+    border: 1px solid var(--line);
+    background: var(--card-soft);
+    cursor: grab;
+}
+
+.section-layout-item.is-dragging {
+    opacity: 0.55;
+}
+
+.section-layout-item.is-drop-target {
+    border-color: var(--accent-2);
+    outline: 1px dashed color-mix(in srgb, var(--accent-2) 55%, transparent);
+}
+
+.section-layout-handle {
+    color: var(--faint);
+    font-size: 0.7rem;
+    letter-spacing: -0.08em;
+    user-select: none;
+}
+
+.section-layout-label {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex: 1;
+    min-width: 0;
+    font-size: 0.75rem;
+    color: var(--ink);
+    cursor: pointer;
+}
+
+.section-layout-label input {
+    accent-color: var(--accent);
+}
+
 .fade-in { animation: fadeIn 0.3s ease-in-out; }
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(5px); }

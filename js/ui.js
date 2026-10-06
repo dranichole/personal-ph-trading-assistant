@@ -55,6 +55,10 @@ export class UIController {
             addTickerInput: document.getElementById('addTickerInput'),
             sectorFilter: document.getElementById('sectorFilter'),
             sortSelect: document.getElementById('sortSelect'),
+            sectionLayoutBtn: document.getElementById('sectionLayoutBtn'),
+            sectionLayoutMenu: document.getElementById('sectionLayoutMenu'),
+            sectionLayoutList: document.getElementById('sectionLayoutList'),
+            sectionLayoutWrap: document.getElementById('sectionLayoutWrap'),
             backBtn: document.getElementById('backBtn'),
             rangeButtons: document.getElementById('rangeButtons'),
             detailName: document.getElementById('detailStockName'),
@@ -140,6 +144,15 @@ export class UIController {
 
         this.els.sortSelect.addEventListener('change', () => this.app.setSort(this.els.sortSelect.value));
         this.els.sectorFilter.addEventListener('change', () => this.app.setSectorFilter(this.els.sectorFilter.value));
+        this.els.sectionLayoutBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleSectionLayoutMenu();
+        });
+        document.addEventListener('click', (e) => {
+            const wrap = this.els.sectionLayoutWrap;
+            if (!wrap || !this.els.sectionLayoutMenu) return;
+            if (!wrap.contains(e.target)) this.closeSectionLayoutMenu();
+        });
 
         this.els.navDashboard.addEventListener('click', () => this.showDashboard());
         this.els.navJournal.addEventListener('click', () => this.showJournal());
@@ -579,11 +592,96 @@ export class UIController {
     /** Always group in the UI so section headers never collapse into one flat list. */
     dashboardSectionsFromWatchlist() {
         const visible = this.app.state.visibleStocks();
-        const defs = CONFIG.watchlistSections || WATCHLIST_SECTIONS || [];
+        const defs = this.app.state.orderedVisibleSectionDefs
+            ? this.app.state.orderedVisibleSectionDefs()
+            : (CONFIG.watchlistSections || WATCHLIST_SECTIONS || []);
         return defs.map(section => ({
             ...section,
             stocks: visible.filter(s => stockGroup(s) === section.id)
         }));
+    }
+
+    toggleSectionLayoutMenu() {
+        const menu = this.els.sectionLayoutMenu;
+        if (!menu) return;
+        const open = menu.classList.contains('hidden');
+        if (open) {
+            this.renderSectionLayoutMenu();
+            menu.classList.remove('hidden');
+        } else {
+            menu.classList.add('hidden');
+        }
+    }
+
+    closeSectionLayoutMenu() {
+        this.els.sectionLayoutMenu?.classList.add('hidden');
+    }
+
+    renderSectionLayoutMenu() {
+        const list = this.els.sectionLayoutList;
+        if (!list) return;
+        const layout = this.app.state.sectionLayout;
+        const defs = CONFIG.watchlistSections || [];
+        const byId = Object.fromEntries(defs.map(s => [s.id, s]));
+
+        list.innerHTML = '';
+        layout.order.forEach(id => {
+            const def = byId[id];
+            if (!def) return;
+            const li = document.createElement('li');
+            li.className = 'section-layout-item';
+            li.draggable = true;
+            li.dataset.sectionId = id;
+
+            const handle = document.createElement('span');
+            handle.className = 'section-layout-handle';
+            handle.title = 'Drag to reorder';
+            handle.textContent = '⋮⋮';
+
+            const label = document.createElement('label');
+            label.className = 'section-layout-label';
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.checked = layout.visible[id] !== false;
+            check.addEventListener('change', () => {
+                this.app.state.setSectionVisible(id, check.checked);
+                check.checked = this.app.state.sectionLayout.visible[id] !== false;
+                this.renderDashboard();
+                this.renderSectionLayoutMenu();
+            });
+            const title = document.createElement('span');
+            title.textContent = def.title;
+            label.appendChild(check);
+            label.appendChild(title);
+
+            li.appendChild(handle);
+            li.appendChild(label);
+            list.appendChild(li);
+
+            li.addEventListener('dragstart', (e) => {
+                li.classList.add('is-dragging');
+                e.dataTransfer.setData('text/plain', id);
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            li.addEventListener('dragend', () => li.classList.remove('is-dragging'));
+            li.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                li.classList.add('is-drop-target');
+            });
+            li.addEventListener('dragleave', () => li.classList.remove('is-drop-target'));
+            li.addEventListener('drop', (e) => {
+                e.preventDefault();
+                li.classList.remove('is-drop-target');
+                const fromId = e.dataTransfer.getData('text/plain');
+                const toId = id;
+                if (fromId && fromId !== toId) {
+                    this.app.state.reorderSections(fromId, toId);
+                    this.renderSectionLayoutMenu();
+                    this.renderDashboard();
+                }
+            });
+        });
     }
 
     renderDashboard() {
@@ -671,25 +769,37 @@ export class UIController {
                     <div>
                     <h3 class="text-sm font-bold text-zinc-900">${escapeHtml(stock.name)}</h3>
                     <p class="text-xs font-medium text-zinc-500 mt-0.5 tracking-wider uppercase">${
-                        isPreIpo ? 'Simulated · Pre-IPO' : `PSE:${escapeHtml(stock.ticker)}`
+                        isPreIpo
+                            ? (filing?.offerOpen ? 'IPO offer open · pre-listing' : 'Simulated · Pre-IPO')
+                            : `PSE:${escapeHtml(stock.ticker)}`
                     }</p>
                     </div>
                     <span class="inline-flex items-center rounded bg-zinc-100 px-2 py-1 text-[9px] font-bold text-zinc-600 uppercase tracking-wide">
                     ${escapeHtml(stock.sector)}
                     </span>
                 </div>
-            ${isPreIpo ? `
-            <div class="mb-3 p-2 rounded border border-amber-100 bg-amber-50">
-                <p class="text-[9px] font-bold uppercase tracking-widest text-amber-800">Final IPO ${ipoPrice != null ? `₱${ipoPrice.toFixed(2)}` : '—'} · not listed yet</p>
-                <p class="text-[10px] text-zinc-600 mt-1 leading-snug">Pre-listing forecast around the official ${ipoPrice != null ? `₱${ipoPrice.toFixed(2)}` : 'IPO'} price. Offer ${escapeHtml(filing?.offerPeriod || '')}. Listing ${escapeHtml(filing?.listingTarget || '')}.</p>
-            </div>` : ''}
+                ${isPreIpo ? `
+                <div class="mb-3 p-2 rounded border border-amber-100 bg-amber-50">
+                    <p class="text-[9px] font-bold uppercase tracking-widest text-amber-800">${
+                        filing?.offerOpen
+                            ? `IPO offer open · ₱${Number(filing.finalOfferPrice).toFixed(2)} · lists ${escapeHtml(filing.listingTarget || 'Oct 20, 2026')}`
+                            : `Final IPO ₱${Number(filing?.finalOfferPrice ?? 6.6).toFixed(2)} · not listed yet`
+                    }</p>
+                    <p class="text-[10px] text-zinc-600 mt-1 leading-snug">${
+                        filing?.offerOpen
+                            ? `Subscribe ${escapeHtml(filing.offerPeriod || '')} via ${escapeHtml(filing.subscribeVia || 'GCash')}. Min ${filing.minSubscriptionShares || 100} sh (₱${filing.minSubscriptionPesos || 660}). Chart is still pre-listing until PSE trading starts.`
+                            : `Pre-listing forecast around the official ₱${Number(filing?.finalOfferPrice ?? 6.6).toFixed(2)} price. Offer ${escapeHtml(filing?.offerPeriod || '')}. Listing ${escapeHtml(filing?.listingTarget || '')}.`
+                    }</p>
+                </div>` : ''}
             <div class="flex justify-between items-end mb-2">
                 <div class="has-tip">
                     <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">${isPreIpo ? 'Model price' : 'Last close'}</p>
                     <p class="text-xl font-bold text-zinc-900">${latest == null ? 'Loading...' : '₱' + latest.toFixed(2)}</p>
                     <p class="text-[10px] text-zinc-500 mt-1">${isPreIpo ? 'Simulated, not a PSE quote' : 'Ending market price'}</p>
                     <span class="tip-bubble">${isPreIpo
-                        ? 'Education only. Built from Mynt IPO-band and earnings context, not live trading.'
+                        ? (filing?.offerOpen
+                            ? 'Offer is open now. Chart is still educational until GCASH lists on the PSE.'
+                            : 'Education only. Built from Mynt IPO-band and earnings context, not live trading.')
                         : 'The stock’s ending price for the last trading day.'}</span>
                 </div>
                 <div class="text-right">
@@ -699,7 +809,9 @@ export class UIController {
                 </div>
             </div>
             <div class="mb-3 flex flex-wrap gap-1.5 items-center">
-                ${isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Pre-IPO forecast</span>` : ''}
+                    ${isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">${
+                        filing?.offerOpen ? 'IPO offer open' : 'Pre-IPO forecast'
+                    }</span>` : ''}
                 ${stats && !isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                     isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
                 }">${stats.trendLabel}</span>` : ''}
@@ -1141,7 +1253,9 @@ export class UIController {
         this.els.detailView.classList.remove('hidden');
         this.setNav('dashboard');
         this.els.detailName.textContent = stock.name;
-        this.els.detailTicker.textContent = stock.preIpo ? 'Simulated · Pre-IPO' : `PSE:${stock.ticker}`;
+        this.els.detailTicker.textContent = stock.preIpo
+            ? (CONFIG.gcashPreIpo?.offerOpen ? 'IPO offer open · pre-listing path' : 'Simulated · Pre-IPO')
+            : `PSE:${stock.ticker}`;
         this.els.detailDataMeta.textContent = 'Loading series…';
         this.syncRangeButtons();
     }
@@ -1152,20 +1266,22 @@ export class UIController {
         const filing = snapshot.filing || (isPreIpo ? CONFIG.gcashPreIpo : null);
 
         this.els.detailName.textContent = stock.name;
-        this.els.detailTicker.textContent = isPreIpo ? 'Simulated · Pre-IPO forecast' : `PSE:${stock.ticker}`;
+        this.els.detailTicker.textContent = isPreIpo
+            ? (filing?.offerOpen ? 'IPO offer open · pre-listing path' : 'Simulated · Pre-IPO forecast')
+            : `PSE:${stock.ticker}`;
         this.els.detailPrice.textContent = `₱${stats.latestClose.toFixed(2)}`;
         const up = stats.pctChange >= 0;
         this.els.detailPctChange.textContent = `${up ? '+' : ''}${stats.pctChange.toFixed(2)}%`;
         this.els.detailPctChange.className = `text-sm font-semibold mt-1 ${up ? 'text-emerald-600' : 'text-red-600'}`;
         this.els.detailDataMeta.textContent = isPreIpo
-            ? `Pre-IPO simulation · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`
+            ? `Pre-listing path · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`
             : `${snapshot.source === 'live' ? 'Live PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
 
         const purchase = this.formatPurchaseLine(stats.purchase);
         if (this.els.detailPurchaseAmount) this.els.detailPurchaseAmount.textContent = purchase.amount;
         if (this.els.detailPurchaseMeta) {
             this.els.detailPurchaseMeta.textContent = isPreIpo
-                ? 'Practice sizing only. GCash is not listed yet.'
+                ? 'Practice sizing only. GCASH lists after the offer period.'
                 : purchase.meta;
         }
         this.updateInvestmentForecast();
@@ -1173,15 +1289,16 @@ export class UIController {
         if (this.els.preIpoBanner) {
             this.els.preIpoBanner.classList.toggle('hidden', !isPreIpo);
             if (isPreIpo && filing && this.els.preIpoBannerText) {
-                this.els.preIpoBannerText.textContent =
-                    `Official final IPO price is ₱${Number(filing.finalOfferPrice).toFixed(2)} (set Oct 1–2, 2026). This chart is still a pre-listing forecast of market expectations around that price, using Mynt’s disclosed earnings. Live PSE quotes appear here only after GCASH starts trading.`;
+                this.els.preIpoBannerText.textContent = filing.offerOpen
+                    ? `IPO offer is open ${filing.offerPeriod} at ₱${Number(filing.finalOfferPrice).toFixed(2)} via ${filing.subscribeVia || 'GCash / GStocks PH'} (min ${filing.minSubscriptionShares || 100} shares / ₱${filing.minSubscriptionPesos || 660}). Listing targeted ${filing.listingTarget} as GCASH. This chart remains an educational pre-listing path until live PSE quotes exist after listing.`
+                    : `Official final IPO price is ₱${Number(filing.finalOfferPrice).toFixed(2)}. This chart is still a pre-listing forecast of market expectations around that price. Live PSE quotes appear here only after GCASH starts trading.`;
                 this.els.preIpoFilingFacts.innerHTML = `
-                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Final IPO price</p><p class="font-semibold text-zinc-800">₱${Number(filing.finalOfferPrice).toFixed(2)}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Offer price</p><p class="font-semibold text-zinc-800">₱${Number(filing.finalOfferPrice).toFixed(2)}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Offer window</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.offerPeriod || '—')}</p></div>
                     <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Listing date</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.listingTarget)}</p></div>
-                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Offer period</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.offerPeriod || '—')}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">How to subscribe</p><p class="font-semibold text-zinc-800">${escapeHtml(filing.subscribeVia || 'GCash')}</p></div>
+                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Min order</p><p class="font-semibold text-zinc-800">${filing.minSubscriptionShares || 100} sh · ₱${filing.minSubscriptionPesos || 660}</p></div>
                     <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Valuation @ IPO</p><p class="font-semibold text-zinc-800">~₱${filing.impliedValuationB}B</p></div>
-                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">NI 2025 / Q1’26</p><p class="font-semibold text-zinc-800">₱${filing.netIncome2025B}B / ₱${filing.netIncomeQ12026B}B</p></div>
-                    <div class="bg-white/70 border border-zinc-200 rounded p-2"><p class="text-[9px] uppercase text-zinc-500 font-semibold">Prior indication</p><p class="font-semibold text-zinc-800">Up to ₱${filing.priorBandHigh?.toFixed?.(2) || filing.priorBandHigh} (~₱${filing.priorMaxValuationB}B)</p></div>
                 `;
             }
         }
@@ -1198,10 +1315,12 @@ export class UIController {
         const caution = snapshot.source === 'simulated' || isPreIpo;
         this.els.aiSimBanner.classList.toggle('hidden', !caution);
         this.els.aiSimBanner.textContent = isPreIpo
-            ? 'Pre-IPO simulation only. AI will use Mynt filing figures and must not treat this as a live PSE quote.'
+            ? (filing?.offerOpen
+                ? 'IPO offer is open — chart is still a pre-listing path. AI will use offer-price / Mynt filing context, not a live PSE quote.'
+                : 'Pre-listing simulation only. AI will use Mynt filing figures and must not treat this as a live PSE quote.')
             : 'Chart is simulated fallback data. Analysis will treat it as untrustworthy.';
         this.els.runAIBtn.textContent = isPreIpo
-            ? 'Run Pre-IPO analysis'
+            ? (filing?.offerOpen ? 'Run IPO offer analysis' : 'Run Pre-IPO analysis')
             : caution
                 ? 'Run analysis anyway'
                 : 'Run Market Analysis';

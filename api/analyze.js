@@ -46,15 +46,15 @@ module.exports = async function(req, res) {
 
         let dataNote;
         if (isGCashPreIpo) {
-            dataNote = `CRITICAL: This is a SIMULATED pre-listing forecast for GCash / Mynt (ticker GCASH). It is NOT live PSE trading until listing. Never describe the chart as a live quote.
-Official IPO facts (Globe/PSE disclosures, Oct 1–2 2026):
+            dataNote = `CRITICAL: This is a SIMULATED pre-listing price path for GCash / Mynt (ticker GCASH). It is NOT live PSE trading until listing day. Never describe the chart as a live quote.
+Official IPO facts (current as of Oct 6 2026 offer open):
 - Final offer price: ₱${filing.finalOfferPrice ?? 6.60} per share
-- Retail offer period: ${filing.offerPeriod || 'October 6–12, 2026'}
+- Retail / TP offer period OPEN: ${filing.offerPeriod || 'October 6–12, 2026'}
+- Subscribe via: ${filing.subscribeVia || 'GCash / GStocks PH'}; minimum about ${filing.minSubscriptionShares || 100} shares (₱${filing.minSubscriptionPesos || 660})
 - Scheduled PSE listing: ${filing.listingTarget || 'October 20, 2026'} under GCASH
-- Implied valuation at final price: about ₱${filing.impliedValuationB ?? 442} billion (prior max indication was up to about ₱${filing.priorMaxValuationB ?? 669} billion at ₱${filing.priorBandHigh ?? 10})
-- Net income 2025: ₱${filing.netIncome2025B ?? 17.2} billion
-- Net income Q1 2026: ₱${filing.netIncomeQ12026B ?? 5.6} billion
-The chart models market expectations around the ₱6.60 final price (priced below the earlier ₱8–₱10 indication), with earnings support and mean reversion to the offer. Prefer Hold/Neutral unless framing an educational IPO-watch thesis. Always say pre-listing / simulated.`;
+- Implied valuation at final price: about ₱${filing.impliedValuationB ?? 442} billion
+- Net income 2025: ₱${filing.netIncome2025B ?? 17.2} billion; Q1 2026: ₱${filing.netIncomeQ12026B ?? 5.6} billion
+Frame as IPO-offer watch / educational subscription context. Prefer Hold/Neutral on the simulated path. Always say offer-period / pre-listing — not trading yet.`;
         } else if (dataSource === 'simulated') {
             dataNote = 'WARNING: Price series is SIMULATED fallback data, not live PSE quotes. Be conservative and prefer Hold unless the user thesis is independent of this chart.';
         } else {
@@ -62,7 +62,7 @@ The chart models market expectations around the ₱6.60 final price (priced belo
         }
 
         const listingLabel = isGCashPreIpo
-            ? `${stockName || 'GCash (Mynt)'} · SIMULATED PRE-IPO (not listed)`
+            ? `${stockName || 'GCash (Mynt)'} · IPO OFFER OPEN (pre-listing path)`
             : `${stockName || ticker} (${ticker}.PS)`;
 
         const prompt = `You are an educational quantitative assistant for a personal Philippine markets journal. This is not financial advice.
@@ -87,7 +87,7 @@ ${dataNote}
 Return raw JSON only with keys:
 "trend" (Bullish, Bearish, or Neutral),
 "action" (Buy, Sell, or Hold),
-"rationale" (2-4 sentences grounding the call in the numbers above; for GCash always state this is a Pre-IPO simulation anchored to Mynt filing figures; include one invalidation level).
+"rationale" (2-4 sentences grounding the call in the numbers above; for GCash always state this is an IPO-offer / pre-listing educational path anchored to Mynt filing figures and the ₱6.60 offer — not live PSE trading; include one invalidation level).
 Do not use markdown.`;
 
         const response = await fetch(

@@ -55,6 +55,67 @@ export class AppState {
         this.activeAlerts = [];
         this.alertLog = readJson(CONFIG.storageKeys.alertLog, {});
         this.browserAlertsEnabled = localStorage.getItem('ta_browser_alerts') === '1';
+        this.sectionLayout = this.loadSectionLayout();
+    }
+
+    defaultSectionLayout() {
+        const defs = CONFIG.watchlistSections || [];
+        return {
+            order: defs.map(s => s.id),
+            visible: Object.fromEntries(defs.map(s => [s.id, true]))
+        };
+    }
+
+    loadSectionLayout() {
+        const defs = CONFIG.watchlistSections || [];
+        const fallback = this.defaultSectionLayout();
+        const stored = readJson(CONFIG.storageKeys.sectionLayout, null);
+        if (!stored || !Array.isArray(stored.order)) return fallback;
+
+        const known = new Set(defs.map(s => s.id));
+        const order = stored.order.filter(id => known.has(id));
+        defs.forEach(s => {
+            if (!order.includes(s.id)) order.push(s.id);
+        });
+        const visible = { ...fallback.visible, ...(stored.visible || {}) };
+        defs.forEach(s => {
+            if (typeof visible[s.id] !== 'boolean') visible[s.id] = true;
+        });
+        return { order, visible };
+    }
+
+    persistSectionLayout() {
+        writeJson(CONFIG.storageKeys.sectionLayout, this.sectionLayout);
+    }
+
+    setSectionVisible(sectionId, visible) {
+        if (!this.sectionLayout.visible.hasOwnProperty(sectionId)) return;
+        this.sectionLayout.visible[sectionId] = Boolean(visible);
+        // Keep at least one section visible
+        if (!Object.values(this.sectionLayout.visible).some(Boolean)) {
+            this.sectionLayout.visible[sectionId] = true;
+        }
+        this.persistSectionLayout();
+    }
+
+    reorderSections(fromId, toId) {
+        const order = [...this.sectionLayout.order];
+        const from = order.indexOf(fromId);
+        const to = order.indexOf(toId);
+        if (from < 0 || to < 0 || from === to) return;
+        order.splice(from, 1);
+        order.splice(to, 0, fromId);
+        this.sectionLayout.order = order;
+        this.persistSectionLayout();
+    }
+
+    orderedVisibleSectionDefs() {
+        const defs = CONFIG.watchlistSections || [];
+        const byId = Object.fromEntries(defs.map(s => [s.id, s]));
+        return this.sectionLayout.order
+            .filter(id => this.sectionLayout.visible[id] !== false)
+            .map(id => byId[id])
+            .filter(Boolean);
     }
 
     loadTheme() {
