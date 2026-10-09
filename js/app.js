@@ -318,6 +318,17 @@ class TradingAssistantApp {
         this.ui.updateInvestmentForecast();
     }
 
+    setPredictHorizon(horizonId) {
+        const allowed = (CONFIG.forecastHorizons || []).some(h => h.id === horizonId);
+        if (!allowed) return;
+        this.state.predictHorizon = horizonId;
+        this.ui.syncPredictHorizonButtons();
+        const stock = this.state.activeStock;
+        if (!stock) return;
+        const snap = this.state.getSnapshot(stock.ticker, this.state.activeRange);
+        if (snap) this.ui.renderPredictPanel(snap);
+    }
+
     async changeRange(range) {
         if (this.state.chartBusy) return;
         if (range === this.state.activeRange) return;

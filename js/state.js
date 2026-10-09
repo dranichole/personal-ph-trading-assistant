@@ -43,6 +43,8 @@ export class AppState {
         this.activeStock = null;
         this.activeRange = CONFIG.dashboardRange;
         this.forecastHorizon = '1mo';
+        this.predictHorizon = '1mo';
+        this.detailTab = 'chart';
         this.sectorFilter = 'all';
         this.sortBy = 'watchlist';
         this.currentView = 'dashboard';

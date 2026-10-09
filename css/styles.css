@@ -288,6 +288,176 @@ header.sticky {
     accent-color: var(--accent);
 }
 
+.detail-tabs {
+    border: 1px solid var(--line);
+}
+
+.predict-model-card .font-mono {
+    word-break: break-word;
+}
+
+/* Dashboard card + detail BUY / SELL / HOLD banners (palette: up / down / chart-line) */
+.action-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin: -1.25rem -1.25rem 0.85rem;
+    padding: 0.55rem 0.85rem;
+    border-radius: 0.5rem 0.5rem 0 0;
+    border-bottom: 1px solid transparent;
+}
+
+.action-banner__main {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    min-width: 0;
+}
+
+.action-banner__label {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.action-banner__hint {
+    font-size: 0.65rem;
+    font-weight: 600;
+    opacity: 0.92;
+    text-align: right;
+    line-height: 1.25;
+}
+
+.action-optional {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.35rem;
+    border: 1px solid color-mix(in srgb, var(--accent-2) 55%, transparent);
+    background: color-mix(in srgb, var(--accent-2) 16%, var(--card));
+    color: var(--accent-2);
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.action-optional--sell {
+    border-color: color-mix(in srgb, var(--accent-2) 65%, var(--down) 20%);
+}
+
+.action-banner--buy {
+    background: color-mix(in srgb, var(--up) 18%, var(--card));
+    border-bottom-color: color-mix(in srgb, var(--up) 40%, var(--line));
+    color: var(--up);
+}
+
+.action-banner--sell {
+    background: color-mix(in srgb, var(--down) 18%, var(--card));
+    border-bottom-color: color-mix(in srgb, var(--down) 40%, var(--line));
+    color: var(--down);
+}
+
+.action-banner--hold {
+    background: color-mix(in srgb, var(--chart-line) 18%, var(--card));
+    border-bottom-color: color-mix(in srgb, var(--chart-line) 40%, var(--line));
+    color: var(--chart-line);
+}
+
+.action-signal {
+    padding: 0.9rem 1rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+}
+
+.action-signal__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.45rem;
+}
+
+.action-signal__titles {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+.action-signal__label {
+    font-size: 0.8rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.action-optional-detail {
+    margin: 0.55rem 0 0;
+    padding-top: 0.5rem;
+    border-top: 1px dashed color-mix(in srgb, var(--accent-2) 40%, var(--line));
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--accent-2);
+    font-weight: 600;
+}
+
+.action-optional-detail--sell + .action-optional-detail,
+.action-optional-detail + .action-optional-detail--sell {
+    margin-top: 0.35rem;
+}
+
+.action-signal__tag {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+}
+
+.action-signal__meaning {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--ink);
+    font-weight: 600;
+}
+
+.action-signal__reason {
+    margin: 0.4rem 0 0;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--muted);
+}
+
+.action-signal--buy {
+    background: color-mix(in srgb, var(--up) 12%, var(--card));
+    border-color: color-mix(in srgb, var(--up) 38%, var(--line));
+}
+
+.action-signal--buy .action-signal__label { color: var(--up); }
+
+.action-signal--sell {
+    background: color-mix(in srgb, var(--down) 12%, var(--card));
+    border-color: color-mix(in srgb, var(--down) 38%, var(--line));
+}
+
+.action-signal--sell .action-signal__label { color: var(--down); }
+
+.action-signal--hold {
+    background: color-mix(in srgb, var(--chart-line) 12%, var(--card));
+    border-color: color-mix(in srgb, var(--chart-line) 38%, var(--line));
+}
+
+.action-signal--hold .action-signal__label { color: var(--chart-line); }
+
 .fade-in { animation: fadeIn 0.3s ease-in-out; }
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(5px); }

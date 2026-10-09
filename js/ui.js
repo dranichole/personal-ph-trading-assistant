@@ -4,7 +4,8 @@
  * ==========================================
  */
 import { CONFIG, BLUECHIP_STOCKS, INCOME_SEED_STOCKS, WATCHLIST_SECTIONS } from './config.js';
-import { summarizeBars, projectHorizonInvestment, FORECAST_HORIZONS } from './indicators.js';
+import { summarizeBars, buildTradeSignal, projectHorizonInvestment, FORECAST_HORIZONS } from './indicators.js';
+import { buildTradingPredictions } from './models.js';
 
 const BLUECHIP_TICKERS = new Set(BLUECHIP_STOCKS.map(s => s.ticker));
 const LOWCOST_TICKERS = new Set(INCOME_SEED_STOCKS.map(s => s.ticker));
@@ -100,6 +101,23 @@ export class UIController {
             preIpoBanner: document.getElementById('preIpoBanner'),
             preIpoBannerText: document.getElementById('preIpoBannerText'),
             preIpoFilingFacts: document.getElementById('preIpoFilingFacts'),
+            actionSignalBanner: document.getElementById('actionSignalBanner'),
+            actionSignalLabel: document.getElementById('actionSignalLabel'),
+            actionSignalMeaning: document.getElementById('actionSignalMeaning'),
+            actionSignalReason: document.getElementById('actionSignalReason'),
+            actionOptionalBuy: document.getElementById('actionOptionalBuy'),
+            actionOptionalBuyDetail: document.getElementById('actionOptionalBuyDetail'),
+            actionOptionalSell: document.getElementById('actionOptionalSell'),
+            actionOptionalSellDetail: document.getElementById('actionOptionalSellDetail'),
+            actionSignalTag: document.getElementById('actionSignalTag'),
+            detailTabChart: document.getElementById('detailTabChart'),
+            detailTabPredict: document.getElementById('detailTabPredict'),
+            detailChartPanel: document.getElementById('detailChartPanel'),
+            detailPredictPanel: document.getElementById('detailPredictPanel'),
+            predictHorizonButtons: document.getElementById('predictHorizonButtons'),
+            predictSummary: document.getElementById('predictSummary'),
+            predictMethodNote: document.getElementById('predictMethodNote'),
+            predictModelCards: document.getElementById('predictModelCards'),
             alertBar: document.getElementById('alertBar'),
             alertList: document.getElementById('alertList'),
             alertEmptyHint: document.getElementById('alertEmptyHint'),
@@ -171,6 +189,9 @@ export class UIController {
             const btn = e.target.closest('[data-chart-style]');
             if (btn) this.app.setChartStyle(btn.getAttribute('data-chart-style'));
         });
+        this.els.detailTabChart?.addEventListener('click', () => this.setDetailTab('chart'));
+        this.els.detailTabPredict?.addEventListener('click', () => this.setDetailTab('predict'));
+        this.buildPredictHorizonButtons();
 
         this.els.journalForm.addEventListener('submit', (e) => {
             e.preventDefault();
@@ -762,9 +783,18 @@ export class UIController {
         const source = snap?.source;
         const purchase = stats ? this.formatPurchaseLine(stats.purchase) : null;
         const ipoPrice = filing?.finalOfferPrice != null ? Number(filing.finalOfferPrice) : null;
+        const signal = buildTradeSignal(stats, { preIpo: isPreIpo, bars });
 
             card.innerHTML = `
-            ${stock.locked ? '' : `<button type="button" data-remove="${escapeHtml(stock.ticker)}" class="absolute top-3 right-3 text-zinc-300 hover:text-zinc-700 text-lg leading-none" aria-label="Remove ${escapeHtml(stock.ticker)}">&times;</button>`}
+            <div class="action-banner action-banner--${escapeHtml(signal.tone)}" role="status">
+                <div class="action-banner__main">
+                    <span class="action-banner__label">${escapeHtml(signal.action)}</span>
+                    ${signal.optionalBuy ? `<span class="action-optional">OPTIONAL BUY</span>` : ''}
+                    ${signal.optionalSell ? `<span class="action-optional action-optional--sell">OPTIONAL SELL</span>` : ''}
+                </div>
+                <span class="action-banner__hint">${escapeHtml(signal.cardHint)}</span>
+            </div>
+            ${stock.locked ? '' : `<button type="button" data-remove="${escapeHtml(stock.ticker)}" class="absolute top-14 right-3 text-zinc-300 hover:text-zinc-700 text-lg leading-none z-10" aria-label="Remove ${escapeHtml(stock.ticker)}">&times;</button>`}
             <div class="flex justify-between items-start mb-4 ${stock.locked ? '' : 'pr-6'}">
                     <div>
                     <h3 class="text-sm font-bold text-zinc-900">${escapeHtml(stock.name)}</h3>
@@ -1284,7 +1314,10 @@ export class UIController {
                 ? 'Practice sizing only. GCASH lists after the offer period.'
                 : purchase.meta;
         }
+        if (!soft) this.setDetailTab('chart');
         this.updateInvestmentForecast();
+        this.renderActionSignal(buildTradeSignal(stats, { preIpo: isPreIpo, bars: snapshot.bars }));
+        this.renderPredictPanel(snapshot);
 
         if (this.els.preIpoBanner) {
             this.els.preIpoBanner.classList.toggle('hidden', !isPreIpo);
@@ -1316,7 +1349,7 @@ export class UIController {
         this.els.aiSimBanner.classList.toggle('hidden', !caution);
         this.els.aiSimBanner.textContent = isPreIpo
             ? (filing?.offerOpen
-                ? 'IPO offer is open — chart is still a pre-listing path. AI will use offer-price / Mynt filing context, not a live PSE quote.'
+                ? 'IPO offer is open. The chart is still a pre-listing path. AI will use offer-price / Mynt filing context, not a live PSE quote.'
                 : 'Pre-listing simulation only. AI will use Mynt filing figures and must not treat this as a live PSE quote.')
             : 'Chart is simulated fallback data. Analysis will treat it as untrustworthy.';
         this.els.runAIBtn.textContent = isPreIpo
@@ -1333,6 +1366,238 @@ export class UIController {
             this.setAIResults(cached.data, cached.at, snapshot.source);
         } else {
             this.resetAIPanel();
+        }
+    }
+
+    setDetailTab(tab) {
+        const next = tab === 'predict' ? 'predict' : 'chart';
+        this.app.state.detailTab = next;
+        const onPredict = next === 'predict';
+        this.els.detailChartPanel?.classList.toggle('hidden', onPredict);
+        this.els.detailPredictPanel?.classList.toggle('hidden', !onPredict);
+        [this.els.detailTabChart, this.els.detailTabPredict].forEach(btn => {
+            if (!btn) return;
+            const active = btn.dataset.detailTab === next;
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+            btn.className = `detail-tab px-3 py-1.5 text-[11px] font-semibold rounded ${
+                active ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'
+            }`;
+        });
+        if (onPredict && this.app.state.activeStock) {
+            const snap = this.app.state.getSnapshot(
+                this.app.state.activeStock.ticker,
+                this.app.state.activeRange
+            );
+            if (snap) this.renderPredictPanel(snap);
+        }
+    }
+
+    buildPredictHorizonButtons() {
+        const host = this.els.predictHorizonButtons;
+        if (!host) return;
+        host.innerHTML = '';
+        FORECAST_HORIZONS.forEach(h => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.dataset.predictHorizon = h.id;
+            btn.textContent = h.label;
+            btn.className = 'predict-horizon-btn px-2 py-1 text-[10px] font-semibold rounded text-zinc-500';
+            btn.addEventListener('click', () => this.app.setPredictHorizon(h.id));
+            host.appendChild(btn);
+        });
+        this.syncPredictHorizonButtons();
+    }
+
+    syncPredictHorizonButtons() {
+        const host = this.els.predictHorizonButtons;
+        if (!host) return;
+        const active = this.app.state.predictHorizon || '1mo';
+        host.querySelectorAll('.predict-horizon-btn').forEach(btn => {
+            const on = btn.dataset.predictHorizon === active;
+            btn.className = `predict-horizon-btn px-2 py-1 text-[10px] font-semibold rounded ${
+                on ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'
+            }`;
+        });
+    }
+
+    renderPredictPanel(snapshot) {
+        if (!this.els.detailPredictPanel || !snapshot?.bars?.length) return;
+        this.syncPredictHorizonButtons();
+
+        const horizonId = this.app.state.predictHorizon || '1mo';
+        const days = FORECAST_HORIZONS.find(h => h.id === horizonId)?.days || 22;
+        const pred = buildTradingPredictions(snapshot.bars, days);
+
+        if (this.els.predictSummary) {
+            if (!pred.ok) {
+                this.els.predictSummary.textContent = pred.note || 'Not enough history for prediction.';
+            } else {
+                const sign = pred.expectedPct >= 0 ? '+' : '';
+                this.els.predictSummary.textContent =
+                    `Ensemble ~${days} sessions: ₱${pred.expected.toFixed(2)} (${sign}${pred.expectedPct}%) · band ₱${pred.low.toFixed(2)} – ₱${pred.high.toFixed(2)}`;
+            }
+        }
+        if (this.els.predictMethodNote) {
+            this.els.predictMethodNote.textContent = pred.ok
+                ? `${pred.method}. Study only. Models simplify markets and are not guarantees.`
+                : 'Open a longer range or wait for more live closes.';
+        }
+
+        const cards = this.els.predictModelCards;
+        if (cards) {
+            cards.innerHTML = '';
+            (pred.models || []).forEach(model => {
+                const card = document.createElement('div');
+                card.className = 'predict-model-card bg-zinc-50 border border-zinc-200 rounded-lg p-3';
+                if (!model.ok) {
+                    card.innerHTML = `
+                        <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">${escapeHtml(model.name || 'Model')}</p>
+                        <p class="text-xs text-zinc-500 mt-2">${escapeHtml(model.note || 'Unavailable')}</p>`;
+                } else {
+                    const sign = model.expectedPct >= 0 ? '+' : '';
+                    card.innerHTML = `
+                        <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">${escapeHtml(model.name)}</p>
+                        <p class="text-sm font-semibold text-zinc-900 mt-1">₱${model.expected.toFixed(2)} <span class="${model.expectedPct >= 0 ? 'text-emerald-600' : 'text-red-600'}">(${sign}${model.expectedPct}%)</span></p>
+                        <p class="text-[10px] text-zinc-500 mt-1">Band ₱${model.low.toFixed(2)} – ₱${model.high.toFixed(2)}</p>
+                        <p class="text-[10px] text-zinc-600 mt-2 leading-snug font-mono">${escapeHtml(model.formula)}</p>
+                        <p class="text-[10px] text-zinc-400 mt-1 leading-snug">${escapeHtml(model.reference)}</p>`;
+                }
+                cards.appendChild(card);
+            });
+        }
+
+        this.drawPredictChart(pred);
+    }
+
+    drawPredictChart(pred) {
+        if (typeof Chart === 'undefined') return;
+        const canvas = this.resetChartCanvas('predictChartCanvas');
+        if (!canvas || !pred?.ok || !pred.chart) return;
+
+        const colors = this.chartColors();
+        const { labels, history, forecast, bandLow, bandHigh } = pred.chart;
+
+        const chart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'History',
+                        data: history,
+                        borderColor: colors.ink || colors.line,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        spanGaps: false,
+                        fill: false
+                    },
+                    {
+                        label: 'Ensemble forecast',
+                        data: forecast,
+                        borderColor: colors.line,
+                        borderWidth: 2.5,
+                        borderDash: [6, 4],
+                        pointRadius: 0,
+                        spanGaps: false,
+                        fill: false
+                    },
+                    {
+                        label: 'Upper band',
+                        data: bandHigh,
+                        borderColor: 'transparent',
+                        pointRadius: 0,
+                        spanGaps: false,
+                        fill: '+1',
+                        backgroundColor: colors.fillTop
+                    },
+                    {
+                        label: 'Lower band',
+                        data: bandLow,
+                        borderColor: 'transparent',
+                        pointRadius: 0,
+                        spanGaps: false,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            boxWidth: 10,
+                            font: { size: 10 },
+                            filter: (item) => item.text === 'History' || item.text === 'Ensemble forecast'
+                        }
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: (ctx) => {
+                                const v = ctx.parsed.y;
+                                if (v == null) return null;
+                                return `${ctx.dataset.label}: ₱${Number(v).toFixed(2)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { maxTicksLimit: 8, font: { size: 9 }, color: colors.muted },
+                        grid: { display: false }
+                    },
+                    y: {
+                        beginAtZero: false,
+                        ticks: {
+                            font: { size: 9 },
+                            color: colors.muted,
+                            callback: (v) => `₱${Number(v).toFixed(0)}`
+                        },
+                        grid: { color: colors.grid }
+                    }
+                },
+                interaction: { mode: 'index', intersect: false }
+            }
+        });
+        this.app.state.registerChart('predictChartCanvas', chart);
+    }
+
+    renderActionSignal(signal) {
+        const banner = this.els.actionSignalBanner;
+        if (!banner || !signal) return;
+        banner.classList.remove('hidden', 'action-signal--buy', 'action-signal--sell', 'action-signal--hold');
+        banner.classList.add(`action-signal--${signal.tone}`);
+        if (this.els.actionSignalLabel) this.els.actionSignalLabel.textContent = signal.action;
+        if (this.els.actionSignalMeaning) this.els.actionSignalMeaning.textContent = signal.meaning;
+        if (this.els.actionSignalReason) this.els.actionSignalReason.textContent = signal.reason;
+        if (this.els.actionSignalTag) {
+            this.els.actionSignalTag.textContent = signal.quantForecast?.ok
+                ? 'Math model'
+                : 'Study signal';
+        }
+
+        const showOptionalBuy = Boolean(signal.optionalBuy) && !signal.optionalSell;
+        const showOptionalSell = Boolean(signal.optionalSell) && !showOptionalBuy;
+        if (this.els.actionOptionalBuy) {
+            this.els.actionOptionalBuy.classList.toggle('hidden', !showOptionalBuy);
+        }
+        if (this.els.actionOptionalBuyDetail) {
+            this.els.actionOptionalBuyDetail.classList.toggle('hidden', !showOptionalBuy);
+            this.els.actionOptionalBuyDetail.textContent = showOptionalBuy
+                ? (signal.optionalBuyDetail || '')
+                : '';
+        }
+        if (this.els.actionOptionalSell) {
+            this.els.actionOptionalSell.classList.toggle('hidden', !showOptionalSell);
+        }
+        if (this.els.actionOptionalSellDetail) {
+            this.els.actionOptionalSellDetail.classList.toggle('hidden', !showOptionalSell);
+            this.els.actionOptionalSellDetail.textContent = showOptionalSell
+                ? (signal.optionalSellDetail || '')
+                : '';
         }
     }
 

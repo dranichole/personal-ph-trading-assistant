@@ -38,7 +38,10 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - **GCash IPO offer** card: offer **open Oct 6–12, 2026** at **₱6.60** (min 100 sh via GCash/GStocks); listing targeted **Oct 20, 2026** as `GCASH`; educational pre-listing path until live PSE quotes exist; AI gets offer-window context
 - Dashboard **Sections** menu: checklist to show/hide section bands and drag to reorder (saved in this browser)
 - **On-site alerts** (free): always-visible alert strip; banner when a name dips ≥3% or rises ≥3% vs prior close; **Enable** + **Test alert** for browser notifications; on-page toast so you can verify without waiting for a real move
-- **Horizon projection** on detail view: enter ₱ amount + pick 1W / 1M / 3M / 6M / 1Y; projects from live trailing returns, rolling window averages, SMA20 alignment, and volatility bands (educational quant-style model — not a guaranteed profit)
+- **Strict math models** in `js/models.js`: Geometric Brownian Motion (`ΔS/S = μΔt + σϵ√Δt`), OU-style mean reversion to SMA20, and ROC momentum; equal-weight ensemble drives OPTIONAL BUY/SELL and the Predict tab
+- **Predict tab** on detail view: forecast path chart + per-model cards with formulas; horizon 1W–1Y
+- **Math model signals**: BUY / SELL / HOLD from RSI, SMAs, and levels; yellow **OPTIONAL BUY** *or* **OPTIONAL SELL** (never both) from that ensemble; sell cue uses the app’s dynamic study entry for paper profit
+- **Math model projection** sidebar: ₱ amount + horizon using the same live history (educational, not a guaranteed profit)
 ### AI mentor
 - Runs through **`/api/analyze`** so `GEMINI_API_KEY` stays in Vercel env vars
 - Prompt includes price change, indicators, recent closes, and whether data is live or simulated

@@ -151,6 +151,21 @@
                 </div>
             </div>
 
+            <div id="actionSignalBanner" class="action-signal hidden mb-4" role="status">
+                <div class="action-signal__head">
+                    <div class="action-signal__titles">
+                        <span id="actionSignalLabel" class="action-signal__label">HOLD</span>
+                        <span id="actionOptionalBuy" class="action-optional hidden">OPTIONAL BUY</span>
+                        <span id="actionOptionalSell" class="action-optional action-optional--sell hidden">OPTIONAL SELL</span>
+                    </div>
+                    <span id="actionSignalTag" class="action-signal__tag">Math model</span>
+                </div>
+                <p id="actionSignalMeaning" class="action-signal__meaning"></p>
+                <p id="actionSignalReason" class="action-signal__reason"></p>
+                <p id="actionOptionalBuyDetail" class="action-optional-detail hidden"></p>
+                <p id="actionOptionalSellDetail" class="action-optional-detail action-optional-detail--sell hidden"></p>
+            </div>
+
             <div id="preIpoBanner" class="hidden mb-4 p-4 border rounded-lg preipo-banner">
                 <p class="text-xs font-bold uppercase tracking-widest mb-1">Simulated Pre-IPO forecast</p>
                 <p id="preIpoBannerText" class="text-xs leading-relaxed text-zinc-600"></p>
@@ -159,31 +174,58 @@
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="lg:col-span-2 space-y-4">
-                    <div class="bg-white border border-zinc-200 rounded-lg shadow-sm p-5 flex flex-col chart-shell">
-                        <div class="mb-3 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                            <div>
-                                <h3 class="text-sm font-semibold text-zinc-900">Price action + trend line</h3>
-                                <p id="candleHelp" class="text-[11px] text-zinc-500 mt-1 max-w-lg">Candles show each day’s open, high, low, and close. The smooth line is the recent average with a soft fade underneath.</p>
-                            </div>
-                            <div id="chartStyleButtons" class="flex gap-1 bg-zinc-100 p-1 rounded shrink-0">
-                                <button type="button" data-chart-style="combo" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded bg-white text-zinc-900 shadow-sm">Candles</button>
-                                <button type="button" data-chart-style="line" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded text-zinc-500">Line</button>
-                            </div>
-                        </div>
-                        <div id="chartPanel" class="relative">
-                            <div id="chartLoadingOverlay" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 rounded">
-                                <div class="loader mb-2"></div>
-                                <p id="chartLoadingText" class="text-xs font-medium text-zinc-600">Updating chart…</p>
-                            </div>
-                            <div class="relative w-full min-h-[280px]">
-                                <canvas id="largeChartCanvas"></canvas>
-                            </div>
-                            <div class="h-24 mt-4 relative w-full">
-                                <canvas id="volumeChartCanvas"></canvas>
-                            </div>
-                        </div>
+                    <div class="detail-tabs flex gap-1 bg-zinc-100 p-1 rounded w-fit" role="tablist" aria-label="Detail panels">
+                        <button type="button" id="detailTabChart" data-detail-tab="chart"
+                            class="detail-tab px-3 py-1.5 text-[11px] font-semibold rounded bg-white text-zinc-900 shadow-sm" role="tab" aria-selected="true">Chart</button>
+                        <button type="button" id="detailTabPredict" data-detail-tab="predict"
+                            class="detail-tab px-3 py-1.5 text-[11px] font-semibold rounded text-zinc-500" role="tab" aria-selected="false">Predict</button>
                     </div>
-                    <div id="indicatorRow" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+
+                    <div id="detailChartPanel" class="space-y-4">
+                        <div class="bg-white border border-zinc-200 rounded-lg shadow-sm p-5 flex flex-col chart-shell">
+                            <div class="mb-3 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-zinc-900">Price action + trend line</h3>
+                                    <p id="candleHelp" class="text-[11px] text-zinc-500 mt-1 max-w-lg">Candles show each day’s open, high, low, and close. The smooth line is the recent average with a soft fade underneath.</p>
+                                </div>
+                                <div id="chartStyleButtons" class="flex gap-1 bg-zinc-100 p-1 rounded shrink-0">
+                                    <button type="button" data-chart-style="combo" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded bg-white text-zinc-900 shadow-sm">Candles</button>
+                                    <button type="button" data-chart-style="line" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded text-zinc-500">Line</button>
+                                </div>
+                            </div>
+                            <div id="chartPanel" class="relative">
+                                <div id="chartLoadingOverlay" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 rounded">
+                                    <div class="loader mb-2"></div>
+                                    <p id="chartLoadingText" class="text-xs font-medium text-zinc-600">Updating chart…</p>
+                                </div>
+                                <div class="relative w-full min-h-[280px]">
+                                    <canvas id="largeChartCanvas"></canvas>
+                                </div>
+                                <div class="h-24 mt-4 relative w-full">
+                                    <canvas id="volumeChartCanvas"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="indicatorRow" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+                    </div>
+
+                    <div id="detailPredictPanel" class="hidden space-y-4">
+                        <div class="bg-white border border-zinc-200 rounded-lg shadow-sm p-5 flex flex-col">
+                            <div class="mb-3 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-zinc-900">Predicted movement</h3>
+                                    <p class="text-[11px] text-zinc-500 mt-1 max-w-lg">Strict math models on this stock’s historical closes: Geometric Brownian Motion, mean reversion to SMA, and rate-of-change momentum. Equal-weight ensemble for the path below.</p>
+                                </div>
+                                <div id="predictHorizonButtons" class="flex flex-wrap gap-1 bg-zinc-100 p-1 rounded shrink-0"></div>
+                            </div>
+                            <p id="predictSummary" class="text-sm font-semibold text-zinc-900 mb-3">--</p>
+                            <div class="relative w-full min-h-[280px]">
+                                <canvas id="predictChartCanvas"></canvas>
+                            </div>
+                            <p id="predictMethodNote" class="text-[11px] text-zinc-500 mt-3 leading-snug">--</p>
+                        </div>
+                        <div id="predictModelCards" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
+                    </div>
                 </div>
 
                 <div class="space-y-4">
@@ -193,8 +235,8 @@
                         <p id="detailPurchaseMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">--</p>
                     </div>
                     <div id="detailForecastBox" class="bg-zinc-50 border border-zinc-200 rounded-lg p-3 forecast-box">
-                        <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Horizon projection</p>
-                        <p class="text-[10px] text-zinc-500 mb-2 leading-snug">How much ₱X might be worth over your chosen window, from this stock’s own price history (trailing return + volatility).</p>
+                        <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Math model projection</p>
+                        <p class="text-[10px] text-zinc-500 mb-2 leading-snug">Quantitative forecast from this stock’s own closes: trailing/rolling returns, mean reversion vs SMA20, and volatility bands. Study only, not a guaranteed profit.</p>
                         <div class="flex items-center gap-2 mb-2">
                             <span class="text-xs text-zinc-500">₱</span>
                             <input id="detailInvestInput" type="number" min="100" step="100" value="5000"
@@ -204,7 +246,7 @@
                         <div id="forecastHorizonButtons" class="flex flex-wrap gap-1 mb-2"></div>
                         <p id="detailForecastResult" class="text-sm font-semibold text-zinc-900 mt-1">--</p>
                         <p id="detailForecastBand" class="text-[11px] text-zinc-500 mt-1">--</p>
-                        <p id="detailForecastMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">Pick a horizon. Educational quant-style projection — not a guaranteed profit.</p>
+                        <p id="detailForecastMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">Pick a horizon. Built from mathematical models on live history. Not a guaranteed profit.</p>
                     </div>
                     <div class="bg-white border border-zinc-200 rounded-lg shadow-sm flex flex-col">
                         <div class="px-5 py-4 border-b border-zinc-100 bg-zinc-50/50">

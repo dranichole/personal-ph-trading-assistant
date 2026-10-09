@@ -1,4 +1,5 @@
 import { CONFIG } from './config.js';
+import { buildTradingPredictions } from './models.js';
 
 /**
  * ==========================================
@@ -155,6 +156,331 @@ export function summarizeBars(bars) {
         recentCloses: closes.slice(-20),
         purchase
     };
+}
+
+const EMPTY_OPTIONAL = {
+    optionalBuy: false,
+    optionalBuyDetail: '',
+    optionalSell: false,
+    optionalSellDetail: '',
+    quantForecast: null
+};
+
+const FORWARD_DAYS = 22;
+
+/**
+ * Forward forecast strictly from js/models.js:
+ * Geometric Brownian Motion + OU mean reversion + ROC momentum (equal-weight ensemble).
+ */
+export function computeQuantForecast(stats, bars = null) {
+    if (!stats || !Number.isFinite(stats.latestClose)) {
+        return { ok: false, note: 'Need price data for the math model.' };
+    }
+
+    const last = stats.latestClose;
+    const entryRef = Number.isFinite(stats.purchase?.entry) && stats.purchase.entry > 0
+        ? stats.purchase.entry
+        : (Number.isFinite(stats.firstClose) && stats.firstClose > 0 ? stats.firstClose : last);
+    const unrealizedPct = entryRef > 0
+        ? parseFloat((((last - entryRef) / entryRef) * 100).toFixed(2))
+        : 0;
+
+    const series = Array.isArray(bars) && bars.length
+        ? bars
+        : (stats.recentCloses || []).map(c => ({ close: c }));
+
+    const pred = buildTradingPredictions(series, FORWARD_DAYS);
+    if (!pred.ok) {
+        return {
+            ok: false,
+            note: pred.note || 'Need more closes for the forward model.',
+            entryRef: parseFloat(entryRef.toFixed(2)),
+            unrealizedPct,
+            last
+        };
+    }
+
+    const gbm = pred.models.find(m => m.id === 'gbm' && m.ok);
+    const mr = pred.models.find(m => m.id === 'meanReversion' && m.ok);
+    const mom = pred.models.find(m => m.id === 'momentum' && m.ok);
+
+    const driftPct = gbm ? gbm.expectedPct : pred.expectedPct;
+    const reversionPct = mr ? mr.expectedPct : 0;
+    const momPct = mom ? mom.expectedPct : 0;
+    const zScore = mr ? mr.zScore : 0;
+
+    let bandPos = 0.5;
+    if (
+        stats.support != null &&
+        stats.resistance != null &&
+        stats.resistance > stats.support
+    ) {
+        bandPos = (last - stats.support) / (stats.resistance - stats.support);
+        bandPos = Math.min(1, Math.max(0, bandPos));
+    }
+
+    const cheap = bandPos <= 0.35 || zScore <= -0.75 || (stats.rsi != null && stats.rsi <= 40);
+    const rich = bandPos >= 0.65 || zScore >= 0.75 || (stats.rsi != null && stats.rsi >= 60);
+
+    return {
+        ok: true,
+        horizonDays: FORWARD_DAYS,
+        expectedPct: pred.expectedPct,
+        driftPct: parseFloat(Number(driftPct).toFixed(2)),
+        reversionPct: parseFloat(Number(reversionPct).toFixed(2)),
+        momPct: parseFloat(Number(momPct).toFixed(2)),
+        volPct: gbm
+            ? parseFloat((gbm.sigmaDaily * Math.sqrt(FORWARD_DAYS) * 100).toFixed(2))
+            : 0,
+        zScore: parseFloat(Number(zScore).toFixed(2)),
+        bandPos: parseFloat(bandPos.toFixed(2)),
+        cheap,
+        rich,
+        entryRef: parseFloat(entryRef.toFixed(2)),
+        unrealizedPct,
+        last,
+        predictedPrice: pred.expected,
+        predictions: pred,
+        method: pred.method
+    };
+}
+
+/**
+ * Exactly one of OPTIONAL BUY or OPTIONAL SELL, or neither.
+ * BUY: price looks low and the math model expects upside.
+ * SELL: dynamic entry X already shows meaningful paper profit and price looks high / upside is fading.
+ */
+function detectOptionalCue(stats, forecast) {
+    const base = { ...EMPTY_OPTIONAL, quantForecast: forecast };
+    if (!forecast?.ok || !stats) return base;
+
+    const exp = forecast.expectedPct;
+    const profit = forecast.unrealizedPct;
+    const entry = forecast.entryRef;
+
+    let buyScore = 0;
+    if (forecast.cheap) buyScore += 2;
+    if (exp >= 2.5) buyScore += 2;
+    else if (exp >= 1) buyScore += 1;
+    if (stats.rsi != null && stats.rsi <= 35) buyScore += 1;
+    if (profit <= 2) buyScore += 1;
+
+    let sellScore = 0;
+    if (profit >= 10) sellScore += 3;
+    else if (profit >= 6) sellScore += 2;
+    else if (profit >= 4) sellScore += 1;
+    if (forecast.rich) sellScore += 2;
+    if (exp <= 0.5) sellScore += 1;
+    if (exp < 0) sellScore += 1;
+    if (stats.rsi != null && stats.rsi >= 65) sellScore += 1;
+
+    const buyEligible = buyScore >= 3 && exp > 0 && forecast.cheap;
+    const sellEligible = sellScore >= 3 && profit >= 6 && (forecast.rich || exp <= 1);
+
+    if (!buyEligible && !sellEligible) return base;
+
+    // Mutual exclusion: stronger side wins; profit-lock edges out when tied.
+    if (sellEligible && (!buyEligible || sellScore >= buyScore)) {
+        const sign = profit >= 0 ? '+' : '';
+        return {
+            ...base,
+            optionalSell: true,
+            optionalSellDetail:
+                `OPTIONAL SELL: the math model uses your study entry near ₱${entry.toFixed(2)}. ` +
+                `Last close ₱${forecast.last.toFixed(2)} implies about ${sign}${profit}% paper profit. ` +
+                `Equal-weight ensemble (~${FORWARD_DAYS} sessions) is ${exp >= 0 ? '+' : ''}${exp}% ` +
+                `(GBM ${forecast.driftPct}%, mean reversion ${forecast.reversionPct}%, momentum ${forecast.momPct}%). ` +
+                `Price looks relatively high, so locking some gain to get part of that investment back is the study cue. Not a broker order.`
+        };
+    }
+
+    return {
+        ...base,
+        optionalBuy: true,
+        optionalBuyDetail:
+            `OPTIONAL BUY: price looks relatively low vs recent support / averages, and the ensemble of GBM + mean reversion + momentum expects about ` +
+            `${exp >= 0 ? '+' : ''}${exp}% over roughly ${FORWARD_DAYS} sessions ` +
+            `(GBM ${forecast.driftPct}%, mean reversion ${forecast.reversionPct}%, momentum ${forecast.momPct}%). ` +
+            `Study entry near ₱${entry.toFixed(2)}. See the Predict tab for paths and formulas. Not a guarantee.`
+    };
+}
+
+function withOptionalFlags(signal, opts = EMPTY_OPTIONAL) {
+    const optionalBuy = Boolean(opts.optionalBuy) && !opts.optionalSell;
+    const optionalSell = Boolean(opts.optionalSell) && !optionalBuy;
+    return {
+        ...signal,
+        optionalBuy,
+        optionalBuyLabel: optionalBuy ? 'OPTIONAL BUY' : '',
+        optionalBuyDetail: optionalBuy ? (opts.optionalBuyDetail || '') : '',
+        optionalSell,
+        optionalSellLabel: optionalSell ? 'OPTIONAL SELL' : '',
+        optionalSellDetail: optionalSell ? (opts.optionalSellDetail || '') : '',
+        quantForecast: opts.quantForecast || null
+    };
+}
+
+function optionalHint(action, opts) {
+    if (opts.optionalBuy) {
+        const exp = opts.quantForecast?.expectedPct;
+        return Number.isFinite(exp)
+            ? `Model leans up ~${exp >= 0 ? '+' : ''}${exp}% · optional buy zone`
+            : 'Model sees a low-price upside study';
+    }
+    if (opts.optionalSell) {
+        const p = opts.quantForecast?.unrealizedPct;
+        const entry = opts.quantForecast?.entryRef;
+        if (Number.isFinite(p) && Number.isFinite(entry)) {
+            return `~${p >= 0 ? '+' : ''}${p}% vs ₱${entry.toFixed(2)} entry · optional sell`;
+        }
+        return 'Meaningful paper profit · optional sell study';
+    }
+    return null;
+}
+
+/**
+ * Educational BUY / SELL / HOLD from local indicators (RSI, SMAs, range trend, S/R).
+ * Yellow OPTIONAL BUY or OPTIONAL SELL (never both) from the mathematical forward model.
+ */
+export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
+    const forecast = computeQuantForecast(stats, bars);
+    const opt = detectOptionalCue(stats, forecast);
+
+    if (!stats || !Number.isFinite(stats.latestClose)) {
+        return withOptionalFlags({
+            action: 'HOLD',
+            tone: 'hold',
+            cardHint: 'Waiting on price data',
+            meaning: 'Holding means stay on the sidelines for now. There is not enough price history yet to lean buy or sell.',
+            reason: 'The app needs a full series of closes before it can score momentum and trend.'
+        }, EMPTY_OPTIONAL);
+    }
+
+    if (preIpo) {
+        return withOptionalFlags({
+            action: 'HOLD',
+            tone: 'hold',
+            cardHint: 'Not listed on the PSE yet',
+            meaning: 'Holding means watch and learn, not trade on the open market. This name is still in the IPO offer or pre-listing phase.',
+            reason: 'There is no live PSE quote yet. Use the offer price for study, and treat the chart as practice only until listing.'
+        }, EMPTY_OPTIONAL);
+    }
+
+    let score = 0;
+    const bits = [];
+    const last = stats.latestClose;
+
+    if (stats.rsi != null) {
+        if (stats.rsi <= 30) {
+            score += 2;
+            bits.push(`RSI is ${stats.rsi} (oversold), so recent selling may be stretched`);
+        } else if (stats.rsi >= 70) {
+            score -= 2;
+            bits.push(`RSI is ${stats.rsi} (overbought), so the recent rise may be stretched`);
+        } else if (stats.rsi <= 40) {
+            score += 1;
+            bits.push(`RSI is ${stats.rsi}, on the softer side`);
+        } else if (stats.rsi >= 60) {
+            score -= 1;
+            bits.push(`RSI is ${stats.rsi}, on the hotter side`);
+        }
+    }
+
+    if (stats.sma20 != null) {
+        if (last >= stats.sma20) {
+            score += 1;
+            bits.push('price sits above the 20-day average (short-term strength)');
+        } else {
+            score -= 1;
+            bits.push('price sits below the 20-day average (short-term weakness)');
+        }
+    }
+
+    if (stats.sma50 != null) {
+        if (last >= stats.sma50) {
+            score += 1;
+            bits.push('price also holds above the 50-day average');
+        } else {
+            score -= 1;
+            bits.push('price also sits below the 50-day average');
+        }
+    }
+
+    if (Number.isFinite(stats.pctChange)) {
+        if (stats.pctChange >= 3) {
+            score += 1;
+            bits.push(`this range is up ${stats.pctChange.toFixed(1)}%`);
+        } else if (stats.pctChange <= -3) {
+            score -= 1;
+            bits.push(`this range is down ${Math.abs(stats.pctChange).toFixed(1)}%`);
+        }
+    }
+
+    if (
+        stats.support != null &&
+        stats.resistance != null &&
+        stats.resistance > stats.support
+    ) {
+        const span = stats.resistance - stats.support;
+        const pos = (last - stats.support) / span;
+        if (pos <= 0.25) {
+            score += 1;
+            bits.push(`price is near recent support around ₱${stats.support.toFixed(2)}`);
+        } else if (pos >= 0.75) {
+            score -= 1;
+            bits.push(`price is near recent resistance around ₱${stats.resistance.toFixed(2)}`);
+        }
+    }
+
+    if (forecast.ok) {
+        if (forecast.expectedPct >= 2) {
+            score += 1;
+            bits.push(`math forward model ~+${forecast.expectedPct}% over ~${FORWARD_DAYS} sessions`);
+        } else if (forecast.expectedPct <= -2) {
+            score -= 1;
+            bits.push(`math forward model ~${forecast.expectedPct}% over ~${FORWARD_DAYS} sessions`);
+        }
+    }
+
+    let action = 'HOLD';
+    if (score >= 2) action = 'BUY';
+    else if (score <= -2) action = 'SELL';
+
+    const why = bits.length
+        ? bits.slice(0, 3).join('; ') + '.'
+        : 'Signals are mixed or light, so the safer default is to wait.';
+    const hint = optionalHint(action, opt);
+    const modelLine = forecast.ok
+        ? ` Math model (momentum + mean reversion + drift/vol on historical closes) points to about ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% over ~${FORWARD_DAYS} sessions vs study entry ₱${forecast.entryRef.toFixed(2)}.`
+        : '';
+
+    if (action === 'BUY') {
+        return withOptionalFlags({
+            action: 'BUY',
+            tone: 'buy',
+            cardHint: hint || 'Momentum and levels lean supportive',
+            meaning: 'Buying means the app sees a better setup to study an entry than to sell or sit idle. You would still size small, use a stop idea, and treat this as practice, not a guaranteed win.',
+            reason: `Why BUY: ${why}${modelLine}`
+        }, opt);
+    }
+
+    if (action === 'SELL') {
+        return withOptionalFlags({
+            action: 'SELL',
+            tone: 'sell',
+            cardHint: hint || 'Momentum and levels look stretched',
+            meaning: 'Selling means the app sees more risk of further weakness than of a clean bounce. If you already hold shares for study, this is a cue to tighten risk or step aside, not a broker order.',
+            reason: `Why SELL: ${why}${modelLine}`
+        }, opt);
+    }
+
+    return withOptionalFlags({
+        action: 'HOLD',
+        tone: 'hold',
+        cardHint: hint || 'No clear edge either way',
+        meaning: 'Holding means stay patient. The chart does not show a clear buy or sell edge right now, so waiting for a cleaner signal is the beginner-friendly move.',
+        reason: `Why HOLD: ${why}${modelLine}`
+    }, opt);
 }
 
 /** Trading days used for each projection horizon. */
