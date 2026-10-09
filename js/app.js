@@ -8,11 +8,13 @@ import { AppState } from './state.js';
 import { DataService, AIService } from './services.js';
 import { summarizeBars } from './indicators.js';
 import { UIController } from './ui.js';
+import { ScalpEngine } from './scalp/engine.js';
 
 class TradingAssistantApp {
     constructor() {
         this.state = new AppState();
         this.ui = new UIController(this);
+        this.scalp = new ScalpEngine();
     }
 
     async init() {
@@ -26,20 +28,56 @@ class TradingAssistantApp {
         await this.loadDashboardData();
         this.evaluateAlerts({ notifyBrowser: false });
         this.startAutoRefresh();
+        this.ui.bindScalp(this.scalp);
+    }
+
+    async openScalp(ticker) {
+        const pick =
+            ticker ||
+            this.ui.els.scalpTickerSelect?.value ||
+            this.state.watchlist.find((s) => !s.preIpo)?.ticker ||
+            'DMC';
+        const t = String(pick).toUpperCase();
+        this.state.currentView = 'scalp';
+        this.ui.showScalp();
+        if (this.ui.els.scalpTickerSelect) this.ui.els.scalpTickerSelect.value = t;
+        const tf = this.state.scalpTimeframe || CONFIG.scalp?.defaultTimeframe || '1m';
+        await this.scalp.start(t, {
+            timeframeId: tf,
+            wsUrl: CONFIG.scalp?.wsUrl || '',
+            pollMs: CONFIG.scalp?.pollMs || 2500
+        });
+    }
+
+    async stopScalp() {
+        await this.scalp.stop();
     }
 
     async loadDashboardData() {
         const stocks = this.state.watchlist;
-        await Promise.all(stocks.map(stock => this.ensureSnapshot(stock.ticker, CONFIG.dashboardRange)));
+        // Small batches so phisix (live fallback) is not flooded into timeouts → simulated.
+        const batchSize = 3;
+        for (let i = 0; i < stocks.length; i += batchSize) {
+            const batch = stocks.slice(i, i + batchSize);
+            await Promise.allSettled(
+                batch.map(stock => this.ensureSnapshot(stock.ticker, CONFIG.dashboardRange, {
+                    preferLive: true
+                }))
+            );
+            this.ui.renderDashboard();
+        }
         this.state.lastRefreshedAt = Date.now();
         this.ui.updateRefreshIndicator();
         this.ui.renderDashboard();
     }
 
-    async ensureSnapshot(ticker, range, { force = false } = {}) {
+    async ensureSnapshot(ticker, range, { force = false, preferLive = false } = {}) {
         if (!force) {
             const cached = this.state.getSnapshot(ticker, range);
-            if (cached) return cached;
+            if (cached?.source === 'live') return cached;
+            if (cached?.source === 'preipo') return cached;
+            // Keep simulated only if we are not actively trying to upgrade to live.
+            if (cached && !preferLive && cached.source === 'simulated') return cached;
         }
         const snapshot = await DataService.fetchHistoricalData(ticker, range);
         this.state.setSnapshot(ticker, range, snapshot);
@@ -89,17 +127,26 @@ class TradingAssistantApp {
         }
 
         try {
-            await Promise.all(
-                this.state.watchlist.map(stock =>
-                    this.ensureSnapshot(stock.ticker, CONFIG.dashboardRange, { force: true })
-                )
-            );
+            const stocks = this.state.watchlist;
+            const batchSize = 3;
+            for (let i = 0; i < stocks.length; i += batchSize) {
+                const batch = stocks.slice(i, i + batchSize);
+                await Promise.allSettled(
+                    batch.map(stock =>
+                        this.ensureSnapshot(stock.ticker, CONFIG.dashboardRange, {
+                            force: true,
+                            preferLive: true
+                        })
+                    )
+                );
+                if (this.state.currentView === 'dashboard') this.ui.renderDashboard();
+            }
 
             if (onDetail) {
                 await this.ensureSnapshot(
                     this.state.activeStock.ticker,
                     this.state.activeRange,
-                    { force: true }
+                    { force: true, preferLive: true }
                 );
             }
 
@@ -319,14 +366,11 @@ class TradingAssistantApp {
     }
 
     setPredictHorizon(horizonId) {
-        const allowed = (CONFIG.forecastHorizons || []).some(h => h.id === horizonId);
+        const allowed = (CONFIG.predictHorizons || []).some(h => h.id === horizonId);
         if (!allowed) return;
         this.state.predictHorizon = horizonId;
         this.ui.syncPredictHorizonButtons();
-        const stock = this.state.activeStock;
-        if (!stock) return;
-        const snap = this.state.getSnapshot(stock.ticker, this.state.activeRange);
-        if (snap) this.ui.renderPredictPanel(snap);
+        this.ui.renderPredictPanel();
     }
 
     async changeRange(range) {

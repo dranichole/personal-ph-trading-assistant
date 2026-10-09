@@ -650,3 +650,14 @@ header.sticky {
 .preipo-card {
     outline: 2px solid color-mix(in srgb, var(--accent-2) 55%, var(--line));
 }
+
+#scalpView .relative.min-h-\[280px\] {
+    min-height: 280px;
+}
+#scalpChartCanvas {
+    width: 100% !important;
+    height: 280px !important;
+}
+.scalp-tf-btn {
+    transition: background 0.15s ease, color 0.15s ease;
+}

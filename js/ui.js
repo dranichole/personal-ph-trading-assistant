@@ -4,8 +4,16 @@
  * ==========================================
  */
 import { CONFIG, BLUECHIP_STOCKS, INCOME_SEED_STOCKS, WATCHLIST_SECTIONS } from './config.js';
-import { summarizeBars, buildTradeSignal, projectHorizonInvestment, FORECAST_HORIZONS } from './indicators.js';
+import {
+    summarizeBars,
+    buildTradeSignal,
+    projectHorizonInvestment,
+    suggestPurchase,
+    FORECAST_HORIZONS
+} from './indicators.js';
 import { buildTradingPredictions } from './models.js';
+import { upcomingCatalysts, fetchHeadlines } from './catalysts.js';
+import { SCALP_TIMEFRAMES } from './scalp/engine.js';
 
 const BLUECHIP_TICKERS = new Set(BLUECHIP_STOCKS.map(s => s.ticker));
 const LOWCOST_TICKERS = new Set(INCOME_SEED_STOCKS.map(s => s.ticker));
@@ -48,7 +56,26 @@ export class UIController {
             date: document.getElementById('currentDate'),
             dashboardView: document.getElementById('dashboardView'),
             detailView: document.getElementById('detailView'),
+            scalpView: document.getElementById('scalpView'),
             journalView: document.getElementById('journalView'),
+            navScalp: document.getElementById('navScalp'),
+            scalpTickerSelect: document.getElementById('scalpTickerSelect'),
+            scalpTfButtons: document.getElementById('scalpTfButtons'),
+            scalpFeedBadge: document.getElementById('scalpFeedBadge'),
+            scalpLastPrice: document.getElementById('scalpLastPrice'),
+            scalpLastMeta: document.getElementById('scalpLastMeta'),
+            scalpAction: document.getElementById('scalpAction'),
+            scalpMetricsRow: document.getElementById('scalpMetricsRow'),
+            scalpEventList: document.getElementById('scalpEventList'),
+            scalpRiskRow: document.getElementById('scalpRiskRow'),
+            scalpBrokerSelect: document.getElementById('scalpBrokerSelect'),
+            scalpBrokerStatus: document.getElementById('scalpBrokerStatus'),
+            scalpQtyInput: document.getElementById('scalpQtyInput'),
+            scalpBuyBtn: document.getElementById('scalpBuyBtn'),
+            scalpSellBtn: document.getElementById('scalpSellBtn'),
+            scalpTrailBtn: document.getElementById('scalpTrailBtn'),
+            scalpPosition: document.getElementById('scalpPosition'),
+            scalpOrderList: document.getElementById('scalpOrderList'),
             dashboardSections: document.getElementById('dashboardSections'),
             emptyWatchlist: document.getElementById('emptyWatchlist'),
             watchlistMessage: document.getElementById('watchlistMessage'),
@@ -116,8 +143,10 @@ export class UIController {
             detailPredictPanel: document.getElementById('detailPredictPanel'),
             predictHorizonButtons: document.getElementById('predictHorizonButtons'),
             predictSummary: document.getElementById('predictSummary'),
-            predictMethodNote: document.getElementById('predictMethodNote'),
             predictModelCards: document.getElementById('predictModelCards'),
+            predictRiskRow: document.getElementById('predictRiskRow'),
+            predictVolumeRow: document.getElementById('predictVolumeRow'),
+            predictCatalystList: document.getElementById('predictCatalystList'),
             alertBar: document.getElementById('alertBar'),
             alertList: document.getElementById('alertList'),
             alertEmptyHint: document.getElementById('alertEmptyHint'),
@@ -173,7 +202,48 @@ export class UIController {
         });
 
         this.els.navDashboard.addEventListener('click', () => this.showDashboard());
+        this.els.navScalp?.addEventListener('click', () => this.app.openScalp());
         this.els.navJournal.addEventListener('click', () => this.showJournal());
+        this.els.scalpTickerSelect?.addEventListener('change', () => {
+            const t = this.els.scalpTickerSelect.value;
+            if (t) this.app.openScalp(t);
+        });
+        this.els.scalpBrokerSelect?.addEventListener('change', async () => {
+            if (!this._scalpEngine) return;
+            const status = await this._scalpEngine.setBroker(this.els.scalpBrokerSelect.value);
+            if (this.els.scalpBrokerStatus) {
+                this.els.scalpBrokerStatus.textContent =
+                    status.message || (status.ok ? 'Connected' : 'Not connected');
+            }
+        });
+        this.els.scalpBuyBtn?.addEventListener('click', async () => {
+            if (!this._scalpEngine?._lastTick) return;
+            try {
+                const qty = Number(this.els.scalpQtyInput?.value) || 100;
+                await this._scalpEngine.buy(qty, this._scalpEngine._lastTick.price);
+            } catch (err) {
+                if (this.els.scalpBrokerStatus) this.els.scalpBrokerStatus.textContent = err.message;
+            }
+        });
+        this.els.scalpSellBtn?.addEventListener('click', async () => {
+            if (!this._scalpEngine?._lastTick) return;
+            try {
+                const qty = Number(this.els.scalpQtyInput?.value) || 100;
+                await this._scalpEngine.sell(qty, this._scalpEngine._lastTick.price);
+            } catch (err) {
+                if (this.els.scalpBrokerStatus) this.els.scalpBrokerStatus.textContent = err.message;
+            }
+        });
+        this.els.scalpTrailBtn?.addEventListener('click', async () => {
+            const trail = this._scalpEngine?.lastEvents?.risk?.trail;
+            if (!trail) return;
+            try {
+                await this._scalpEngine.setStop(trail);
+            } catch (err) {
+                if (this.els.scalpBrokerStatus) this.els.scalpBrokerStatus.textContent = err.message;
+            }
+        });
+        this.buildScalpTfButtons();
         this.els.themeToggle?.addEventListener('click', () => {
             const next = this.app.state.theme === 'night' ? 'day' : 'night';
             this.app.setTheme(next);
@@ -390,6 +460,9 @@ export class UIController {
 
     setNav(view) {
         this.els.navDashboard.className = `nav-pill px-3 py-1.5 rounded-full${view === 'dashboard' ? ' active' : ''}`;
+        if (this.els.navScalp) {
+            this.els.navScalp.className = `nav-pill px-3 py-1.5 rounded-full${view === 'scalp' ? ' active' : ''}`;
+        }
         this.els.navJournal.className = `nav-pill px-3 py-1.5 rounded-full${view === 'journal' ? ' active' : ''}`;
     }
 
@@ -546,67 +619,75 @@ export class UIController {
         }
 
         this.syncForecastHorizonButtons();
-        resultEl.textContent = 'Calculating…';
-        if (bandEl) bandEl.textContent = 'Pulling price history…';
 
-        // Prefer the longest live series we can get (1y → 6mo → 3mo → chart range).
+        // Use chart snapshot first so the panel is never stuck on "Calculating…".
+        let snap = this.app.state.getSnapshot(stock.ticker, this.app.state.activeRange);
+        const paintForecast = (s) => {
+            if (!s?.bars?.length) return false;
+            const horizon = this.app.state.forecastHorizon || '1mo';
+            const forecast = projectHorizonInvestment(s.bars, input.value, horizon);
+            if (!forecast.ok) {
+                resultEl.textContent = '—';
+                if (bandEl) bandEl.textContent = '—';
+                metaEl.textContent = forecast.note;
+                return true;
+            }
+            const sign = forecast.gain >= 0 ? '+' : '';
+            const tone = forecast.gain >= 0 ? 'text-emerald-600' : 'text-red-600';
+            resultEl.className = `text-sm font-semibold mt-1 ${tone}`;
+            resultEl.textContent =
+                `≈ ₱${forecast.projected.toLocaleString('en-PH', { minimumFractionDigits: 2 })} (${sign}₱${Math.abs(forecast.gain).toLocaleString('en-PH', { minimumFractionDigits: 2 })})`;
+            if (bandEl) {
+                bandEl.textContent =
+                    `Band ₱${forecast.low.toLocaleString('en-PH', { minimumFractionDigits: 2 })} – ₱${forecast.high.toLocaleString('en-PH', { minimumFractionDigits: 2 })} · ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% / ${forecast.horizonLabel}`;
+            }
+            metaEl.textContent = `${forecast.method}`;
+            return true;
+        };
+
+        if (!paintForecast(snap)) {
+            resultEl.textContent = 'Calculating…';
+            if (bandEl) bandEl.textContent = 'Pulling history…';
+        }
+
         const candidates = [
-            CONFIG.forecastHistoryRange || '1y',
-            '6mo',
-            '3mo',
             this.app.state.activeRange,
-            '1mo'
+            '3mo',
+            CONFIG.forecastHistoryRange || '1y'
         ];
-        let snap = null;
         for (const rangeId of [...new Set(candidates)]) {
             try {
                 const next = await this.app.ensureSnapshot(stock.ticker, rangeId);
                 if (!next?.bars?.length) continue;
-                if (next.source === 'preipo' || next.source === 'simulated') continue;
-                if (!snap || next.bars.length > snap.bars.length) snap = next;
-                // Good enough for any horizon once we have ~4 months of sessions
-                if (snap.bars.length >= 90) break;
+                if (!snap || next.bars.length > snap.bars.length) {
+                    snap = next;
+                    paintForecast(snap);
+                }
+                if (snap.bars.length >= 60) break;
             } catch {
-                /* try next range */
+                /* try next */
             }
         }
         if (!snap?.bars?.length) {
             resultEl.textContent = '—';
             if (bandEl) bandEl.textContent = '—';
-            metaEl.textContent = 'Live history unavailable for projection.';
+            metaEl.textContent = 'History unavailable.';
             return;
         }
 
-        const horizon = this.app.state.forecastHorizon || '1mo';
-        const forecast = projectHorizonInvestment(snap.bars, input.value, horizon);
-        if (!forecast.ok) {
-            resultEl.textContent = '—';
-            if (bandEl) bandEl.textContent = '—';
-            metaEl.textContent = forecast.note;
-            return;
-        }
-
-        const sign = forecast.gain >= 0 ? '+' : '';
-        const tone = forecast.gain >= 0 ? 'text-emerald-600' : 'text-red-600';
-        resultEl.className = `text-sm font-semibold mt-1 ${tone}`;
-        resultEl.textContent =
-            `≈ ₱${forecast.projected.toLocaleString('en-PH', { minimumFractionDigits: 2 })} (${sign}₱${Math.abs(forecast.gain).toLocaleString('en-PH', { minimumFractionDigits: 2 })})`;
-        if (bandEl) {
-            bandEl.textContent =
-                `1σ band ₱${forecast.low.toLocaleString('en-PH', { minimumFractionDigits: 2 })} – ₱${forecast.high.toLocaleString('en-PH', { minimumFractionDigits: 2 })} · expected ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% over ${forecast.horizonLabel}`;
-        }
-        const shareBit = forecast.shares != null
-            ? `${forecast.shares} sh at ₱${forecast.price.toFixed(2)} · `
-            : '';
-        metaEl.textContent =
-            `${shareBit}Trail ${forecast.trailPct >= 0 ? '+' : ''}${forecast.trailPct}% over last ${forecast.horizonLabel}; vol ±${forecast.volPct}%. ${forecast.trendNote}. ${forecast.method} Not a promise of profit.`;
+        paintForecast(snap);
     }
 
     formatPurchaseLine(purchase) {
         if (!purchase?.entry || !purchase?.spend) return { amount: '—', meta: 'Need more price history.' };
         return {
             amount: `~₱${purchase.spend.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-            meta: `${purchase.shares} sh @ ₱${purchase.entry.toFixed(2)} · stop ~₱${purchase.stop.toFixed(2)} · practice only`
+            meta: (() => {
+                const tps = Array.isArray(purchase.takeProfits) && purchase.takeProfits.length
+                    ? ` · TP ${purchase.takeProfits.map(p => `₱${Number(p).toFixed(2)}`).join('/')}`
+                    : '';
+                return `${purchase.shares} sh @ ₱${purchase.entry.toFixed(2)} · trail ₱${purchase.stop.toFixed(2)}${tps}`;
+            })()
         };
     }
 
@@ -845,13 +926,15 @@ export class UIController {
                 ${stats && !isPreIpo ? `<span class="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                     isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
                 }">${stats.trendLabel}</span>` : ''}
-                ${source === 'preipo' ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Simulated<span class="tip-bubble">Not listed on the PSE. Chart is a forecast model only.</span></span>`
+                ${source === 'preipo' ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-50 text-amber-800">Pre-list<span class="tip-bubble">Not listed on the PSE yet. Educational path only.</span></span>`
                     : source ? `<span class="has-tip text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                     source === 'live' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
                 }">${source === 'live' ? 'Live' : 'Simulated'}<span class="tip-bubble">${
                     source === 'live'
-                        ? 'Prices from PSE Edge (or phisix fallback) in Philippine pesos.'
-                        : 'Live quotes failed, so this is practice data only.'
+                        ? (snap?.provider === 'phisix'
+                            ? 'Live PSE closes via phisix (PHP).'
+                            : 'Live PSE OHLC via quote API (PHP).')
+                        : 'All live sources failed. Practice data only — tap Refresh.'
                 }</span></span>` : ''}
             </div>
             ${isPreIpo && filing ? `
@@ -864,7 +947,7 @@ export class UIController {
                 <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Starter buy idea</p>
                 <p class="text-sm font-semibold text-zinc-900 mt-0.5">${escapeHtml(purchase.amount || '—')}</p>
                 <p class="text-[10px] text-zinc-500 mt-0.5">${escapeHtml(purchase.meta || '')}</p>
-                <span class="tip-bubble">A practice-sized buy near recent support. About ₱1,000 would be at risk if the stop is hit. Not advice.</span>
+                <span class="tip-bubble">Practice size near support with ATR trailing stop. Not advice.</span>
             </div>` : ''}
             <div class="h-28 mb-4 w-full relative">
                  <canvas id="dash-chart-${escapeHtml(stock.ticker)}"></canvas>
@@ -1259,27 +1342,336 @@ export class UIController {
     }
 
     showDashboard() {
+        this.app.stopScalp?.();
         this.app.state.currentView = 'dashboard';
         this.els.detailView.classList.add('hidden');
         this.els.journalView.classList.add('hidden');
+        this.els.scalpView?.classList.add('hidden');
         this.els.dashboardView.classList.remove('hidden');
         this.setNav('dashboard');
         this.renderDashboard();
     }
 
     showJournal() {
+        this.app.stopScalp?.();
         this.app.state.currentView = 'journal';
         this.els.detailView.classList.add('hidden');
         this.els.dashboardView.classList.add('hidden');
+        this.els.scalpView?.classList.add('hidden');
         this.els.journalView.classList.remove('hidden');
         this.setNav('journal');
         this.renderJournal();
     }
 
+    showScalp() {
+        this.app.state.currentView = 'scalp';
+        this.els.detailView.classList.add('hidden');
+        this.els.dashboardView.classList.add('hidden');
+        this.els.journalView.classList.add('hidden');
+        this.els.scalpView?.classList.remove('hidden');
+        this.setNav('scalp');
+        this.populateScalpTickers();
+        this.syncScalpTfButtons();
+    }
+
+    bindScalp(engine) {
+        if (this._scalpUnsub) this._scalpUnsub();
+        this._scalpEngine = engine;
+        this._scalpUnsub = engine.subscribe((payload) => this.renderScalp(payload));
+    }
+
+    buildScalpTfButtons() {
+        const host = this.els.scalpTfButtons;
+        if (!host) return;
+        host.innerHTML = '';
+        SCALP_TIMEFRAMES.forEach((tf) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'scalp-tf-btn px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded text-zinc-600';
+            btn.dataset.tf = tf.id;
+            btn.textContent = tf.label;
+            btn.addEventListener('click', () => {
+                this.app.state.scalpTimeframe = tf.id;
+                this._scalpEngine?.setTimeframe(tf.id);
+                this.syncScalpTfButtons();
+            });
+            host.appendChild(btn);
+        });
+        this.syncScalpTfButtons();
+    }
+
+    syncScalpTfButtons() {
+        const active = this.app.state.scalpTimeframe || '1m';
+        this.els.scalpTfButtons?.querySelectorAll('[data-tf]').forEach((btn) => {
+            const on = btn.dataset.tf === active;
+            btn.classList.toggle('bg-white', on);
+            btn.classList.toggle('shadow-sm', on);
+            btn.classList.toggle('text-zinc-900', on);
+            btn.classList.toggle('text-zinc-600', !on);
+        });
+    }
+
+    populateScalpTickers() {
+        const sel = this.els.scalpTickerSelect;
+        if (!sel) return;
+        const current = this._scalpEngine?.ticker || sel.value;
+        const list = this.app.state.watchlist.filter((s) => !s.preIpo);
+        sel.innerHTML = '';
+        list.forEach((s) => {
+            const opt = document.createElement('option');
+            opt.value = s.ticker;
+            opt.textContent = `${s.ticker} · ${s.name}`;
+            sel.appendChild(opt);
+        });
+        if (current && [...sel.options].some((o) => o.value === current)) {
+            sel.value = current;
+        }
+    }
+
+    renderScalp(payload) {
+        if (this.app.state.currentView !== 'scalp' || !payload) return;
+        const { tick, bars, metrics, signal, position, orders, feedMode, ticker } = payload;
+
+        if (this.els.scalpFeedBadge) {
+            const mode = feedMode || 'idle';
+            this.els.scalpFeedBadge.textContent = mode;
+            this.els.scalpFeedBadge.className =
+                'text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded ' +
+                (mode === 'websocket'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : mode === 'sse'
+                      ? 'bg-sky-100 text-sky-800'
+                      : mode === 'poll-live'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-zinc-100 text-zinc-500');
+        }
+
+        if (tick?.price != null) {
+            this.els.scalpLastPrice.textContent = `₱${Number(tick.price).toFixed(2)}`;
+            this.els.scalpLastMeta.textContent = `${ticker} · ${tick.side || '—'} · size ${tick.size ?? '—'} · ${new Date(tick.t).toLocaleTimeString('en-PH', { hour12: false })}`;
+        }
+
+        const action = signal?.action || 'FLAT';
+        if (this.els.scalpAction) {
+            this.els.scalpAction.textContent = action;
+            this.els.scalpAction.className =
+                'text-sm font-bold tracking-widest uppercase ' +
+                (action.includes('LONG')
+                    ? 'text-emerald-600'
+                    : action.includes('SHORT')
+                      ? 'text-red-600'
+                      : 'text-zinc-500');
+        }
+
+        this.renderScalpMetrics(metrics);
+        this.renderScalpEvents(signal?.events || []);
+        this.renderScalpRisk(signal?.risk);
+        this.renderScalpPosition(position, orders);
+        this.drawScalpChart(bars || [], metrics);
+    }
+
+    renderScalpMetrics(metrics) {
+        const host = this.els.scalpMetricsRow;
+        if (!host) return;
+        if (!metrics) {
+            host.innerHTML = '<p class="text-[11px] text-zinc-400 col-span-full">Building candles…</p>';
+            return;
+        }
+        const cells = [
+            { k: 'VWAP', v: metrics.vwap, tip: 'Session volume-weighted average price.' },
+            { k: 'EMA 9', v: metrics.ema9, tip: 'Fast exponential MA.' },
+            { k: 'EMA 21', v: metrics.ema21, tip: 'Slow exponential MA.' },
+            { k: 'HMA', v: metrics.hma, tip: 'Hull MA — lower lag than SMA/EMA.' },
+            { k: 'ATR', v: metrics.atr, tip: 'Intraday average true range.' },
+            {
+                k: 'Δ Vol',
+                v: metrics.volumeDelta,
+                tip: 'Buy volume − sell volume (or candle-inferred).',
+                raw: true
+            }
+        ];
+        host.innerHTML = cells
+            .map((c) => {
+                const txt =
+                    c.v == null
+                        ? '—'
+                        : c.raw
+                          ? Number(c.v).toFixed(0)
+                          : `₱${Number(c.v).toFixed(2)}`;
+                return `<div class="bg-white border border-zinc-200 rounded px-2 py-1.5 has-tip">
+                    <p class="text-[8px] font-bold uppercase tracking-widest text-zinc-400">${c.k}</p>
+                    <p class="text-xs font-semibold text-zinc-800">${txt}</p>
+                    <span class="tip-bubble">${c.tip}</span>
+                </div>`;
+            })
+            .join('');
+    }
+
+    renderScalpEvents(events) {
+        const list = this.els.scalpEventList;
+        if (!list) return;
+        if (!events.length) {
+            list.innerHTML = '<li class="text-zinc-400">No triggers yet — waiting for price/volume events.</li>';
+            return;
+        }
+        list.innerHTML = events
+            .map((e) => {
+                const tone = e.bias === 'buy' ? 'text-emerald-700' : e.bias === 'sell' ? 'text-red-700' : 'text-zinc-600';
+                return `<li class="has-tip ${tone}"><span class="font-semibold">${e.label}</span>
+                    <span class="tip-bubble">${e.tip || ''}</span></li>`;
+            })
+            .join('');
+    }
+
+    renderScalpRisk(risk) {
+        const host = this.els.scalpRiskRow;
+        if (!host) return;
+        if (!risk) {
+            host.innerHTML = '<span class="text-zinc-400">—</span>';
+            return;
+        }
+        host.innerHTML = [
+            ['Trail', risk.trail],
+            ['TP1', risk.tp1],
+            ['TP2', risk.tp2],
+            ['ATR', risk.atr]
+        ]
+            .map(
+                ([k, v]) =>
+                    `<span class="px-2 py-1 rounded bg-zinc-50 border border-zinc-100"><span class="text-zinc-400">${k}</span> ₱${Number(v).toFixed(2)}</span>`
+            )
+            .join('');
+    }
+
+    renderScalpPosition(position, orders) {
+        if (this.els.scalpPosition) {
+            if (!position?.qty) {
+                this.els.scalpPosition.textContent = 'No position';
+            } else {
+                const stop = position.stopPrice != null ? ` · stop ₱${Number(position.stopPrice).toFixed(2)}` : '';
+                this.els.scalpPosition.textContent = `${position.qty} sh @ ₱${Number(position.avgPrice).toFixed(2)}${stop}`;
+            }
+        }
+        if (this.els.scalpOrderList) {
+            const rows = (orders || []).slice().reverse();
+            this.els.scalpOrderList.innerHTML = rows.length
+                ? rows
+                      .map(
+                          (o) =>
+                              `<li>${o.side.toUpperCase()} ${o.qty} · ${o.status} · ${new Date(o.at).toLocaleTimeString('en-PH', { hour12: false })}</li>`
+                      )
+                      .join('')
+                : '';
+        }
+    }
+
+    drawScalpChart(bars, metrics) {
+        if (!bars.length) return;
+        const colors = this.chartColors();
+        const labels = bars.map((b) => b.date);
+        const closes = bars.map((b) => b.close);
+        const seriesPack = [
+            { key: 'Close', data: closes },
+            { key: 'VWAP', data: metrics?.series?.vwap || null },
+            { key: 'EMA9', data: metrics?.series?.ema9 || null },
+            { key: 'HMA', data: metrics?.series?.hma || null }
+        ];
+        const existing = this.app.state.chartInstances?.scalpChartCanvas;
+        if (existing && existing.data?.datasets?.length === seriesPack.filter((s) => s.data).length) {
+            existing.data.labels = labels;
+            let di = 0;
+            seriesPack.forEach((s) => {
+                if (!s.data) return;
+                if (existing.data.datasets[di]) existing.data.datasets[di].data = s.data;
+                di += 1;
+            });
+            existing.update('none');
+            return;
+        }
+        const canvas = this.resetChartCanvas('scalpChartCanvas');
+        if (!canvas) return;
+        const datasets = [];
+        if (closes.length) {
+            datasets.push({
+                label: 'Close',
+                data: closes,
+                borderColor: colors.line,
+                backgroundColor: colors.area,
+                borderWidth: 1.5,
+                pointRadius: 0,
+                tension: 0.15,
+                fill: true
+            });
+        }
+        if (metrics?.series?.vwap) {
+            datasets.push({
+                label: 'VWAP',
+                data: metrics.series.vwap,
+                borderColor: '#d97706',
+                borderWidth: 1.25,
+                borderDash: [4, 3],
+                pointRadius: 0,
+                tension: 0,
+                fill: false
+            });
+        }
+        if (metrics?.series?.ema9) {
+            datasets.push({
+                label: 'EMA9',
+                data: metrics.series.ema9,
+                borderColor: '#059669',
+                borderWidth: 1,
+                pointRadius: 0,
+                tension: 0,
+                fill: false
+            });
+        }
+        if (metrics?.series?.hma) {
+            datasets.push({
+                label: 'HMA',
+                data: metrics.series.hma,
+                borderColor: '#7c3aed',
+                borderWidth: 1,
+                pointRadius: 0,
+                tension: 0,
+                fill: false
+            });
+        }
+        const chart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: { boxWidth: 10, font: { size: 9 }, color: colors.muted }
+                    },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: {
+                        ticks: { maxTicksLimit: 8, color: colors.muted, font: { size: 9 } },
+                        grid: { display: false }
+                    },
+                    y: {
+                        ticks: { color: colors.muted, font: { size: 9 } },
+                        grid: { color: colors.grid }
+                    }
+                }
+            }
+        });
+        this.app.state.registerChart('scalpChartCanvas', chart);
+    }
+
     showDetailsLoading(stock) {
+        this.app.stopScalp?.();
         this.app.state.currentView = 'detail';
         this.els.dashboardView.classList.add('hidden');
         this.els.journalView.classList.add('hidden');
+        this.els.scalpView?.classList.add('hidden');
         this.els.detailView.classList.remove('hidden');
         this.setNav('dashboard');
         this.els.detailName.textContent = stock.name;
@@ -1307,11 +1699,20 @@ export class UIController {
             ? `Pre-listing path · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`
             : `${snapshot.source === 'live' ? 'Live PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
 
-        const purchase = this.formatPurchaseLine(stats.purchase);
+        const shortPred = !isPreIpo ? buildTradingPredictions(snapshot.bars, 3) : null;
+        const purchaseStats = suggestPurchase(
+            stats.latestClose,
+            stats.support,
+            stats.resistance,
+            stats.atr,
+            CONFIG.starterRiskPesos,
+            shortPred?.ok ? { low: shortPred.low, high: shortPred.high } : null
+        );
+        const purchase = this.formatPurchaseLine(purchaseStats);
         if (this.els.detailPurchaseAmount) this.els.detailPurchaseAmount.textContent = purchase.amount;
         if (this.els.detailPurchaseMeta) {
             this.els.detailPurchaseMeta.textContent = isPreIpo
-                ? 'Practice sizing only. GCASH lists after the offer period.'
+                ? 'Practice only until listing.'
                 : purchase.meta;
         }
         if (!soft) this.setDetailTab('chart');
@@ -1396,11 +1797,12 @@ export class UIController {
         const host = this.els.predictHorizonButtons;
         if (!host) return;
         host.innerHTML = '';
-        FORECAST_HORIZONS.forEach(h => {
+        (CONFIG.predictHorizons || []).forEach(h => {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.dataset.predictHorizon = h.id;
             btn.textContent = h.label;
+            btn.title = `${h.sessions} session outlook`;
             btn.className = 'predict-horizon-btn px-2 py-1 text-[10px] font-semibold rounded text-zinc-500';
             btn.addEventListener('click', () => this.app.setPredictHorizon(h.id));
             host.appendChild(btn);
@@ -1411,7 +1813,7 @@ export class UIController {
     syncPredictHorizonButtons() {
         const host = this.els.predictHorizonButtons;
         if (!host) return;
-        const active = this.app.state.predictHorizon || '1mo';
+        const active = this.app.state.predictHorizon || '3s';
         host.querySelectorAll('.predict-horizon-btn').forEach(btn => {
             const on = btn.dataset.predictHorizon === active;
             btn.className = `predict-horizon-btn px-2 py-1 text-[10px] font-semibold rounded ${
@@ -1420,27 +1822,57 @@ export class UIController {
         });
     }
 
-    renderPredictPanel(snapshot) {
-        if (!this.els.detailPredictPanel || !snapshot?.bars?.length) return;
-        this.syncPredictHorizonButtons();
+    paintPredictFromSnapshot(snap, stock) {
+        if (!snap?.bars?.length) {
+            if (this.els.predictSummary) this.els.predictSummary.textContent = 'Need chart history.';
+            return;
+        }
 
-        const horizonId = this.app.state.predictHorizon || '1mo';
-        const days = FORECAST_HORIZONS.find(h => h.id === horizonId)?.days || 22;
-        const pred = buildTradingPredictions(snapshot.bars, days);
+        const horizonId = this.app.state.predictHorizon || '3s';
+        const sessions = (CONFIG.predictHorizons || []).find(h => h.id === horizonId)?.sessions || 3;
+        const pred = buildTradingPredictions(snap.bars, sessions);
 
         if (this.els.predictSummary) {
             if (!pred.ok) {
-                this.els.predictSummary.textContent = pred.note || 'Not enough history for prediction.';
+                this.els.predictSummary.textContent = pred.note || 'Need more history.';
             } else {
                 const sign = pred.expectedPct >= 0 ? '+' : '';
-                this.els.predictSummary.textContent =
-                    `Ensemble ~${days} sessions: ₱${pred.expected.toFixed(2)} (${sign}${pred.expectedPct}%) · band ₱${pred.low.toFixed(2)} – ₱${pred.high.toFixed(2)}`;
+                const proxy = pred.usedSessionProxy ? ' · OHLC sessions' : '';
+                this.els.predictSummary.innerHTML = `
+                    <span class="has-tip">${sessions}S · ₱${pred.expected.toFixed(2)} (${sign}${pred.expectedPct}%)
+                    <span class="tip-bubble">${escapeHtml(pred.method)}${proxy}. Study only.</span></span>
+                    <span class="text-zinc-500 font-medium text-xs ml-1">₱${pred.low.toFixed(2)}–₱${pred.high.toFixed(2)}</span>`;
             }
         }
-        if (this.els.predictMethodNote) {
-            this.els.predictMethodNote.textContent = pred.ok
-                ? `${pred.method}. Study only. Models simplify markets and are not guarantees.`
-                : 'Open a longer range or wait for more live closes.';
+
+        const riskHost = this.els.predictRiskRow;
+        if (riskHost) {
+            riskHost.innerHTML = '';
+            if (pred.risk?.ok) {
+                const chip = (label, value, tip) => `
+                    <span class="has-tip inline-flex items-center gap-1 px-2 py-1 rounded border border-zinc-200 bg-zinc-50 text-zinc-700">
+                        <span class="font-bold uppercase tracking-wide text-[9px] text-zinc-500">${label}</span>
+                        <span class="font-semibold">₱${value}</span>
+                        <span class="tip-bubble">${tip}</span>
+                    </span>`;
+                riskHost.innerHTML =
+                    chip('Trail', pred.risk.trailStop.toFixed(2), pred.risk.tip) +
+                    pred.risk.takeProfits.map(tp =>
+                        chip(tp.id, tp.price.toFixed(2), `TP in band ₱${pred.risk.bandLow}–₱${pred.risk.bandHigh}`)
+                    ).join('');
+            }
+        }
+
+        const volHost = this.els.predictVolumeRow;
+        if (volHost) {
+            if (pred.volume?.ok) {
+                const v = pred.volume;
+                volHost.innerHTML = `
+                    <span class="has-tip">${escapeHtml(v.label)} · VWAP ₱${v.vwap.toFixed(2)} · vol×${v.volRatio}
+                    <span class="tip-bubble">${escapeHtml(v.tip)} Price ${v.vsVwapPct >= 0 ? '+' : ''}${v.vsVwapPct}% vs VWAP.</span></span>`;
+            } else {
+                volHost.textContent = '';
+            }
         }
 
         const cards = this.els.predictModelCards;
@@ -1448,25 +1880,92 @@ export class UIController {
             cards.innerHTML = '';
             (pred.models || []).forEach(model => {
                 const card = document.createElement('div');
-                card.className = 'predict-model-card bg-zinc-50 border border-zinc-200 rounded-lg p-3';
+                card.className = 'has-tip predict-model-card bg-zinc-50 border border-zinc-200 rounded-lg p-2.5';
                 if (!model.ok) {
                     card.innerHTML = `
                         <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">${escapeHtml(model.name || 'Model')}</p>
-                        <p class="text-xs text-zinc-500 mt-2">${escapeHtml(model.note || 'Unavailable')}</p>`;
+                        <p class="text-[11px] text-zinc-500 mt-1">${escapeHtml(model.note || 'Unavailable')}</p>
+                        <span class="tip-bubble">Needs more closes for this model.</span>`;
                 } else {
                     const sign = model.expectedPct >= 0 ? '+' : '';
                     card.innerHTML = `
                         <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">${escapeHtml(model.name)}</p>
-                        <p class="text-sm font-semibold text-zinc-900 mt-1">₱${model.expected.toFixed(2)} <span class="${model.expectedPct >= 0 ? 'text-emerald-600' : 'text-red-600'}">(${sign}${model.expectedPct}%)</span></p>
-                        <p class="text-[10px] text-zinc-500 mt-1">Band ₱${model.low.toFixed(2)} – ₱${model.high.toFixed(2)}</p>
-                        <p class="text-[10px] text-zinc-600 mt-2 leading-snug font-mono">${escapeHtml(model.formula)}</p>
-                        <p class="text-[10px] text-zinc-400 mt-1 leading-snug">${escapeHtml(model.reference)}</p>`;
+                        <p class="text-sm font-semibold text-zinc-900 mt-0.5">₱${model.expected.toFixed(2)}
+                            <span class="${model.expectedPct >= 0 ? 'text-emerald-600' : 'text-red-600'}">(${sign}${model.expectedPct}%)</span></p>
+                        <p class="text-[10px] text-zinc-500">₱${model.low.toFixed(2)}–₱${model.high.toFixed(2)}</p>
+                        <span class="tip-bubble">${escapeHtml(model.formula)}. ${escapeHtml(model.tip || '')}</span>`;
                 }
                 cards.appendChild(card);
             });
         }
 
         this.drawPredictChart(pred);
+        this.renderPredictCatalysts(stock?.ticker);
+    }
+
+    async renderPredictPanel(snapshot) {
+        if (!this.els.detailPredictPanel) return;
+        this.syncPredictHorizonButtons();
+
+        const stock = this.app.state.activeStock;
+        let snap = snapshot;
+        if (!snap?.bars?.length && stock) {
+            snap = this.app.state.getSnapshot(stock.ticker, this.app.state.activeRange);
+        }
+
+        // Paint immediately from chart data so Predict never waits on /api/quote 1y.
+        this.paintPredictFromSnapshot(snap, stock);
+
+        if (!stock || stock.preIpo || !snap?.bars?.length) return;
+
+        const reqId = (this._predictReqId = (this._predictReqId || 0) + 1);
+        try {
+            const longSnap = await this.app.ensureSnapshot(
+                stock.ticker,
+                CONFIG.predictHistoryRange || '1y'
+            );
+            if (reqId !== this._predictReqId) return;
+            if (longSnap?.bars?.length > (snap?.bars?.length || 0)) {
+                this.paintPredictFromSnapshot(longSnap, stock);
+            }
+        } catch {
+            /* keep immediate paint */
+        }
+    }
+
+    async renderPredictCatalysts(ticker) {
+        const list = this.els.predictCatalystList;
+        if (!list || !ticker) return;
+
+        const cal = upcomingCatalysts(ticker, 4);
+        list.innerHTML = '';
+        cal.forEach(ev => {
+            const li = document.createElement('li');
+            li.className = 'has-tip flex justify-between gap-2';
+            li.innerHTML = `
+                <span>${escapeHtml(ev.title)}</span>
+                <span class="text-zinc-400 shrink-0">${ev.inDays === 0 ? 'today' : ev.inDays > 0 ? `in ${ev.inDays}d` : `${Math.abs(ev.inDays)}d ago`}</span>
+                <span class="tip-bubble">${escapeHtml(ev.type)} · ${escapeHtml(ev.date)}</span>`;
+            list.appendChild(li);
+        });
+        if (!cal.length) {
+            list.innerHTML = '<li class="text-zinc-400">No calendar items in the next 60 days.</li>';
+        }
+
+        // Headlines are optional (/api/news 404s on static server).
+        const news = await fetchHeadlines(ticker);
+        news.slice(0, 3).forEach(n => {
+            const li = document.createElement('li');
+            li.className = 'has-tip truncate';
+            const title = escapeHtml(n.title || 'Headline');
+            if (n.link) {
+                li.innerHTML = `<a href="${escapeHtml(n.link)}" target="_blank" rel="noopener noreferrer" class="hover:text-zinc-900">${title}</a>
+                    <span class="tip-bubble">${escapeHtml(n.publisher || 'News')}</span>`;
+            } else {
+                li.innerHTML = `${title}<span class="tip-bubble">${escapeHtml(n.publisher || 'News')}</span>`;
+            }
+            list.appendChild(li);
+        });
     }
 
     drawPredictChart(pred) {

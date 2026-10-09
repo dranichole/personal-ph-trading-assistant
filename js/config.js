@@ -122,8 +122,17 @@ export const CONFIG = {
         { id: '6mo', label: '6M' },
         { id: '1y', label: '1Y' }
     ],
+    /** Short Predict-tab sessions (1–5), session bars from daily OHLC when no intraday feed. */
+    predictHorizons: [
+        { id: '1s', sessions: 1, label: '1S' },
+        { id: '2s', sessions: 2, label: '2S' },
+        { id: '3s', sessions: 3, label: '3S' },
+        { id: '4s', sessions: 4, label: '4S' },
+        { id: '5s', sessions: 5, label: '5S' }
+    ],
     dashboardRange: '1mo',
     forecastHistoryRange: '1y',
+    predictHistoryRange: '1y',
     refreshMsOpen: 5 * 60 * 1000,
     refreshMsClosed: 30 * 60 * 1000,
     starterRiskPesos: 1000,
@@ -139,5 +148,20 @@ export const CONFIG = {
      * Yahoo *.PS equity charts currently 404, so they are not used.
      */
     quoteApiUrl: (ticker, range = '1mo') =>
-        `/api/quote?ticker=${encodeURIComponent(ticker)}&range=${encodeURIComponent(range)}`
+        `/api/quote?ticker=${encodeURIComponent(ticker)}&range=${encodeURIComponent(range)}`,
+    /**
+     * Day-trade / scalp feed.
+     * Set wsUrl to a real exchange/broker tick socket when you have one.
+     * Otherwise: SSE `/api/ticks` (Vercel) → live phisix poll on the client.
+     */
+    scalp: {
+        pollMs: 2500,
+        defaultTimeframe: '1m',
+        wsUrl: '', // e.g. wss://your-tick-gateway/stream
+        defaultBroker: 'paper',
+        brokers: {
+            ibkr: { enabled: false, gatewayUrl: '' },
+            alpaca: { enabled: false, key: '', secret: '', paper: true }
+        }
+    }
 };

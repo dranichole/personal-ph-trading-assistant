@@ -31,6 +31,13 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Beginner-friendly chart hover copy (what an up/down day means, what the trend line is)
 - Chart loading overlay that locks range / style controls while updates run
 
+### Scalp / day-trade view
+- Separate **Scalp** nav: tick stream → client candle aggregator (1m / 5m / 15m / 1h)
+- Feed path: optional WebSocket (`CONFIG.scalp.wsUrl`) → SSE `/api/ticks` → live phisix last-price poll (no free PSE tick WS)
+- Intraday metrics in memory: session **VWAP**, **EMA 9/21**, **HMA**, **ATR**, volume delta / order-flow tilt
+- Event triggers (not EOD GBM): VWAP reclaim/loss, volume spike, EMA cross, S/R break
+- Tick-recomputed trail / TP1 / TP2; **paper** buy/sell/stop from the chart panel; IBKR/Alpaca stubs until keys are set
+
 ### Beginner helpers
 - Clear “last close” wording (ending market price, not a sale price)
 - Educational **starter buy idea** (example size near support using a fixed practice risk budget)
@@ -38,10 +45,10 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - **GCash IPO offer** card: offer **open Oct 6–12, 2026** at **₱6.60** (min 100 sh via GCash/GStocks); listing targeted **Oct 20, 2026** as `GCASH`; educational pre-listing path until live PSE quotes exist; AI gets offer-window context
 - Dashboard **Sections** menu: checklist to show/hide section bands and drag to reorder (saved in this browser)
 - **On-site alerts** (free): always-visible alert strip; banner when a name dips ≥3% or rises ≥3% vs prior close; **Enable** + **Test alert** for browser notifications; on-page toast so you can verify without waiting for a real move
-- **Strict math models** in `js/models.js`: Geometric Brownian Motion (`ΔS/S = μΔt + σϵ√Δt`), OU-style mean reversion to SMA20, and ROC momentum; equal-weight ensemble drives OPTIONAL BUY/SELL and the Predict tab
-- **Predict tab** on detail view: forecast path chart + per-model cards with formulas; horizon 1W–1Y
-- **Math model signals**: BUY / SELL / HOLD from RSI, SMAs, and levels; yellow **OPTIONAL BUY** *or* **OPTIONAL SELL** (never both) from that ensemble; sell cue uses the app’s dynamic study entry for paper profit
-- **Math model projection** sidebar: ₱ amount + horizon using the same live history (educational, not a guaranteed profit)
+- **Strict math models** in `js/models.js`: GBM, adaptive OU/SMA mean reversion, ROC momentum, VWAP/volume confirm; 1–5 session Predict outlooks (OHLC session proxy when no PSE intraday feed)
+- **Predict tab**: short path chart, ATR trail + TP1–3 in the forecast band, catalyst calendar + `/api/news` headlines; details in hover tips
+- **Signals**: BUY / SELL / HOLD; exclusive OPTIONAL BUY *or* OPTIONAL SELL from the ensemble
+- **₱ projection** sidebar: longer horizons from live history (educational)
 ### AI mentor
 - Runs through **`/api/analyze`** so `GEMINI_API_KEY` stays in Vercel env vars
 - Prompt includes price change, indicators, recent closes, and whether data is live or simulated
@@ -62,16 +69,20 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 trading_assistant/
 ├── api/
 │   ├── analyze.js       # Vercel serverless Gemini proxy
-│   └── quote.js         # Vercel serverless PSE Edge / phisix proxy
+│   ├── quote.js         # Vercel serverless PSE Edge / phisix proxy
+│   ├── news.js          # Headlines proxy for Predict catalysts
+│   └── ticks.js         # SSE tick relay (phisix last price)
 ├── css/
 │   └── styles.css       # Theme tokens, tooltips, loaders
 ├── js/
 │   ├── app.js           # Bootstrap, refresh, chart/theme flow
 │   ├── config.js        # Watchlist defaults, ranges, endpoints
 │   ├── indicators.js    # SMA, RSI, ATR, S/R, starter buy helper
+│   ├── models.js        # GBM / OU / ROC ensemble (daily Predict)
 │   ├── services.js      # Market data + AI client
 │   ├── state.js         # Cache, watchlist/journal persistence, theme
-│   └── ui.js            # DOM + Chart.js
+│   ├── ui.js            # DOM + Chart.js
+│   └── scalp/           # Day-trade engine (ticks, candles, signals, paper broker)
 ├── index.html
 └── README.md
 ```
@@ -109,7 +120,7 @@ Charts, indicators, watchlist, journal, and themes work without the AI key.
 2. Set environment variable **`GEMINI_API_KEY`**.
 3. Deploy. Static files are served from the root; `api/analyze.js` → `/api/analyze`, `api/quote.js` → `/api/quote`.
 
-Market data prefers `/api/quote` (PSE Edge OHLC in pesos). On a plain local static server without that route, the client falls back to phisix daily closes (still live PHP prices; OHLC may be flattened). **Simulated** means every live path failed.
+Market data prefers `/api/quote` (PSE Edge OHLC in pesos). On a plain local static server (where `/api/quote` 404s), the client **skips the dead quote route after the first failure** and loads **live PSE closes from phisix** (queued, batched) so charts stay Live. **Simulated** only appears if Edge and phisix both fail. Use **Refresh** to retry live.
 
 ## Privacy notes
 

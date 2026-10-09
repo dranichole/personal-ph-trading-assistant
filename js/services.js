@@ -108,32 +108,145 @@ async function fetchJson(url, label) {
     return response.json();
 }
 
-/** Local/static fallback when `/api/quote` is not running (CORS-friendly phisix). */
-async function fetchPhisixSnapshot(ticker, range) {
-    const needed =
-        range === '5d' ? 5 :
-        range === '3mo' ? 66 :
-        range === '6mo' ? 130 :
-        range === '1y' ? 260 :
-        22;
+async function fetchWithTimeout(promise, ms, label) {
+    let timer;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+            })
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
+/** Skip dead /api/quote on static local servers after the first failure. */
+let quoteApiAvailable = null; // null | true | false
+
+/** Limit parallel phisix calls so a full watchlist does not timeout into simulated. */
+const PHISIX_HOSTS = [
+    'https://phisix-api3.appspot.com',
+    'https://phisix-api.appspot.com'
+];
+let phisixHostIndex = 0;
+let phisixActive = 0;
+const phisixWaiters = [];
+const PHISIX_MAX_CONCURRENT = 4;
+
+function acquirePhisixSlot() {
+    if (phisixActive < PHISIX_MAX_CONCURRENT) {
+        phisixActive += 1;
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => phisixWaiters.push(resolve));
+}
+
+function releasePhisixSlot() {
+    phisixActive = Math.max(0, phisixActive - 1);
+    const next = phisixWaiters.shift();
+    if (next) {
+        phisixActive += 1;
+        next();
+    }
+}
+
+async function fetchPhisixJson(path) {
+    await acquirePhisixSlot();
+    try {
+        const hosts = [
+            PHISIX_HOSTS[phisixHostIndex],
+            ...PHISIX_HOSTS.filter((_, i) => i !== phisixHostIndex)
+        ];
+        let lastErr;
+        for (const host of hosts) {
+            try {
+                const data = await fetchWithTimeout(
+                    fetchJson(`${host}${path}`, 'phisix'),
+                    8000,
+                    'phisix'
+                );
+                phisixHostIndex = PHISIX_HOSTS.indexOf(host);
+                return data;
+            } catch (err) {
+                lastErr = err;
+            }
+        }
+        throw lastErr || new Error('phisix failed');
+    } finally {
+        releasePhisixSlot();
+    }
+}
+
+function stitchCloses(bars) {
+    const sorted = normalizeBars(bars);
+    return sorted.map((b, i) => {
+        const open = i > 0 ? sorted[i - 1].close : b.close;
+        return {
+            ...b,
+            open,
+            high: Math.max(open, b.close),
+            low: Math.min(open, b.close),
+            price: b.close
+        };
+    });
+}
+
+function phisixDaysNeeded(range) {
+    if (range === '5d') return 5;
+    if (range === '3mo') return 45;
+    if (range === '6mo' || range === '1y') return 60;
+    return 22;
+}
+
+/** Live PSE closes via phisix (browser-safe). Primary local fallback when /api/quote is down. */
+async function fetchPhisixSnapshot(ticker, range) {
+    const needed = phisixDaysNeeded(range);
     const days = tradingDaysBack(needed);
     const bars = [];
     let name = ticker;
 
-    for (let i = 0; i < days.length; i += 5) {
-        const chunk = days.slice(i, i + 5);
+    // Latest quote first (cheap, authoritative last close).
+    try {
+        const latest = await fetchPhisixJson(`/stocks/${encodeURIComponent(ticker)}.json`);
+        const stock = latest?.stocks?.[0];
+        if (stock?.price?.amount != null) {
+            name = stock.name || name;
+            const close = parseFloat(Number(stock.price.amount).toFixed(4));
+            const asOf = latest.as_of ? new Date(latest.as_of) : new Date();
+            const ts = Math.floor(asOf.getTime() / 1000);
+            bars.push({
+                date: formatBarDate(ts),
+                timestamp: ts,
+                open: close,
+                high: close,
+                low: close,
+                close,
+                price: close,
+                volume: Number(stock.volume) || 0
+            });
+        }
+    } catch {
+        /* continue with dated history */
+    }
+
+    // Historical EOD closes (queued; small parallel chunks).
+    for (let i = 0; i < days.length; i += 4) {
+        const chunk = days.slice(i, i + 4);
         const parts = await Promise.all(
             chunk.map(async (ymd) => {
                 try {
-                    const data = await fetchJson(
-                        `https://phisix-api3.appspot.com/stocks/${encodeURIComponent(ticker)}.${ymd}.json`,
-                        'phisix'
+                    const data = await fetchPhisixJson(
+                        `/stocks/${encodeURIComponent(ticker)}.${ymd}.json`
                     );
                     const stock = data?.stocks?.[0];
-                    if (!stock?.price?.amount && stock?.price?.amount !== 0) return null;
+                    if (stock?.price?.amount == null) return null;
                     const close = Number(stock.price.amount);
-                    const asOf = data.as_of ? new Date(data.as_of) : new Date(`${ymd}T00:00:00+08:00`);
+                    if (!Number.isFinite(close)) return null;
+                    const asOf = data.as_of
+                        ? new Date(data.as_of)
+                        : new Date(`${ymd}T00:00:00+08:00`);
                     return {
                         name: stock.name,
                         close,
@@ -146,10 +259,11 @@ async function fetchPhisixSnapshot(ticker, range) {
             })
         );
         parts.forEach((part) => {
-            if (!part || !Number.isFinite(part.close)) return;
+            if (!part) return;
             name = part.name || name;
             const close = parseFloat(part.close.toFixed(4));
             const ts = Math.floor(part.date.getTime() / 1000);
+            if (bars.some((b) => Math.abs(b.timestamp - ts) < 6 * 3600)) return;
             bars.push({
                 date: formatBarDate(ts),
                 timestamp: ts,
@@ -163,48 +277,8 @@ async function fetchPhisixSnapshot(ticker, range) {
         });
     }
 
-    try {
-        const latest = await fetchJson(
-            `https://phisix-api3.appspot.com/stocks/${encodeURIComponent(ticker)}.json`,
-            'phisix'
-        );
-        const stock = latest?.stocks?.[0];
-        if (stock?.price?.amount != null) {
-            name = stock.name || name;
-            const close = parseFloat(Number(stock.price.amount).toFixed(4));
-            const asOf = latest.as_of ? new Date(latest.as_of) : new Date();
-            const ts = Math.floor(asOf.getTime() / 1000);
-            if (!bars.some((b) => b.timestamp === ts)) {
-                bars.push({
-                    date: formatBarDate(ts),
-                    timestamp: ts,
-                    open: close,
-                    high: close,
-                    low: close,
-                    close,
-                    price: close,
-                    volume: Number(stock.volume) || 0
-                });
-            }
-        }
-    } catch {
-        /* keep whatever daily bars we have */
-    }
-
-    const sorted = normalizeBars(bars);
-    if (sorted.length < 2) throw new Error('Phisix insufficient history');
-
-    // Infer open/high/low from prior close when only EOD close is available.
-    const stitched = sorted.map((b, i) => {
-        const open = i > 0 ? sorted[i - 1].close : b.close;
-        return {
-            ...b,
-            open,
-            high: Math.max(open, b.close),
-            low: Math.min(open, b.close),
-            price: b.close
-        };
-    });
+    const stitched = stitchCloses(bars);
+    if (stitched.length < 2) throw new Error('Phisix insufficient history');
 
     return {
         ticker,
@@ -214,62 +288,78 @@ async function fetchPhisixSnapshot(ticker, range) {
         provider: 'phisix',
         fetchedAt: Date.now(),
         range,
-        note: 'Close/volume from phisix (local fallback)'
+        note: 'Live PSE closes via phisix'
     };
+}
+
+async function fetchQuoteApiSnapshot(ticker, range) {
+    const data = await fetchWithTimeout(
+        fetchJson(CONFIG.quoteApiUrl(ticker, range), 'quote API'),
+        3500,
+        'quote API'
+    );
+    if (Array.isArray(data.bars) && data.bars.length) {
+        return {
+            ticker: data.ticker || ticker,
+            name: data.name || ticker,
+            bars: normalizeBars(data.bars),
+            source: 'live',
+            provider: data.provider || 'pse-edge',
+            fetchedAt: data.fetchedAt || Date.now(),
+            range,
+            note: data.note || null
+        };
+    }
+    if (data.chart?.result?.[0]) {
+        const result = data.chart.result[0];
+        const timestamps = result.timestamp || [];
+        const quote = result.indicators?.quote?.[0] || {};
+        const bars = [];
+        for (let i = 0; i < timestamps.length; i++) {
+            if (quote.close?.[i] == null) continue;
+            const close = parseFloat(Number(quote.close[i]).toFixed(4));
+            bars.push({
+                date: formatBarDate(timestamps[i]),
+                timestamp: timestamps[i],
+                open: quote.open?.[i] != null ? parseFloat(Number(quote.open[i]).toFixed(4)) : close,
+                high: quote.high?.[i] != null ? parseFloat(Number(quote.high[i]).toFixed(4)) : close,
+                low: quote.low?.[i] != null ? parseFloat(Number(quote.low[i]).toFixed(4)) : close,
+                close,
+                price: close,
+                volume: quote.volume?.[i] != null ? quote.volume[i] : 0
+            });
+        }
+        if (bars.length) {
+            return {
+                ticker,
+                name: result.meta?.shortName || ticker,
+                bars: normalizeBars(bars),
+                source: 'live',
+                provider: 'yahoo',
+                fetchedAt: Date.now(),
+                range
+            };
+        }
+    }
+    throw new Error('quote API returned no bars');
 }
 
 async function fetchLiveSnapshot(ticker, range) {
     const errors = [];
 
-    try {
-        const data = await fetchJson(CONFIG.quoteApiUrl(ticker, range), 'quote API');
-        if (Array.isArray(data.bars) && data.bars.length) {
-            return {
-                ticker: data.ticker || ticker,
-                name: data.name || ticker,
-                bars: normalizeBars(data.bars),
-                source: 'live',
-                provider: data.provider || 'pse-edge',
-                fetchedAt: data.fetchedAt || Date.now(),
-                range,
-                note: data.note || null
-            };
-        }
-        // Legacy Yahoo payload shape (if an older proxy is still deployed)
-        if (data.chart?.result?.[0]) {
-            const result = data.chart.result[0];
-            const timestamps = result.timestamp || [];
-            const quote = result.indicators?.quote?.[0] || {};
-            const bars = [];
-            for (let i = 0; i < timestamps.length; i++) {
-                if (quote.close?.[i] == null) continue;
-                const close = parseFloat(Number(quote.close[i]).toFixed(4));
-                bars.push({
-                    date: formatBarDate(timestamps[i]),
-                    timestamp: timestamps[i],
-                    open: quote.open?.[i] != null ? parseFloat(Number(quote.open[i]).toFixed(4)) : close,
-                    high: quote.high?.[i] != null ? parseFloat(Number(quote.high[i]).toFixed(4)) : close,
-                    low: quote.low?.[i] != null ? parseFloat(Number(quote.low[i]).toFixed(4)) : close,
-                    close,
-                    price: close,
-                    volume: quote.volume?.[i] != null ? quote.volume[i] : 0
-                });
-            }
-            if (bars.length) {
-                return {
-                    ticker,
-                    name: result.meta?.shortName || ticker,
-                    bars: normalizeBars(bars),
-                    source: 'live',
-                    provider: 'yahoo',
-                    fetchedAt: Date.now(),
-                    range
-                };
+    if (quoteApiAvailable !== false) {
+        try {
+            const snap = await fetchQuoteApiSnapshot(ticker, range);
+            quoteApiAvailable = true;
+            return snap;
+        } catch (err) {
+            errors.push(err.message);
+            if (/HTTP 404|timed out|Failed to fetch/i.test(String(err.message))) {
+                quoteApiAvailable = false;
             }
         }
-        throw new Error('quote API returned no bars');
-    } catch (err) {
-        errors.push(err.message);
+    } else {
+        errors.push('quote API skipped (unavailable)');
     }
 
     try {

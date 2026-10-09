@@ -166,7 +166,7 @@ const EMPTY_OPTIONAL = {
     quantForecast: null
 };
 
-const FORWARD_DAYS = 22;
+const FORWARD_SESSIONS = 3;
 
 /**
  * Forward forecast strictly from js/models.js:
@@ -189,7 +189,7 @@ export function computeQuantForecast(stats, bars = null) {
         ? bars
         : (stats.recentCloses || []).map(c => ({ close: c }));
 
-    const pred = buildTradingPredictions(series, FORWARD_DAYS);
+    const pred = buildTradingPredictions(series, FORWARD_SESSIONS);
     if (!pred.ok) {
         return {
             ok: false,
@@ -224,13 +224,13 @@ export function computeQuantForecast(stats, bars = null) {
 
     return {
         ok: true,
-        horizonDays: FORWARD_DAYS,
+        horizonDays: FORWARD_SESSIONS,
         expectedPct: pred.expectedPct,
         driftPct: parseFloat(Number(driftPct).toFixed(2)),
         reversionPct: parseFloat(Number(reversionPct).toFixed(2)),
         momPct: parseFloat(Number(momPct).toFixed(2)),
         volPct: gbm
-            ? parseFloat((gbm.sigmaDaily * Math.sqrt(FORWARD_DAYS) * 100).toFixed(2))
+            ? parseFloat((gbm.sigmaDaily * Math.sqrt(FORWARD_SESSIONS) * 100).toFixed(2))
             : 0,
         zScore: parseFloat(Number(zScore).toFixed(2)),
         bandPos: parseFloat(bandPos.toFixed(2)),
@@ -286,11 +286,7 @@ function detectOptionalCue(stats, forecast) {
             ...base,
             optionalSell: true,
             optionalSellDetail:
-                `OPTIONAL SELL: the math model uses your study entry near ₱${entry.toFixed(2)}. ` +
-                `Last close ₱${forecast.last.toFixed(2)} implies about ${sign}${profit}% paper profit. ` +
-                `Equal-weight ensemble (~${FORWARD_DAYS} sessions) is ${exp >= 0 ? '+' : ''}${exp}% ` +
-                `(GBM ${forecast.driftPct}%, mean reversion ${forecast.reversionPct}%, momentum ${forecast.momPct}%). ` +
-                `Price looks relatively high, so locking some gain to get part of that investment back is the study cue. Not a broker order.`
+                `~${sign}${profit}% vs entry ₱${entry.toFixed(2)}. Ensemble ${exp >= 0 ? '+' : ''}${exp}% over ${FORWARD_SESSIONS}S. Consider locking gains.`
         };
     }
 
@@ -298,10 +294,7 @@ function detectOptionalCue(stats, forecast) {
         ...base,
         optionalBuy: true,
         optionalBuyDetail:
-            `OPTIONAL BUY: price looks relatively low vs recent support / averages, and the ensemble of GBM + mean reversion + momentum expects about ` +
-            `${exp >= 0 ? '+' : ''}${exp}% over roughly ${FORWARD_DAYS} sessions ` +
-            `(GBM ${forecast.driftPct}%, mean reversion ${forecast.reversionPct}%, momentum ${forecast.momPct}%). ` +
-            `Study entry near ₱${entry.toFixed(2)}. See the Predict tab for paths and formulas. Not a guarantee.`
+            `Price looks low. Ensemble ${exp >= 0 ? '+' : ''}${exp}% over ${FORWARD_SESSIONS}S (GBM/OU/ROC). Entry ~₱${entry.toFixed(2)}.`
     };
 }
 
@@ -323,17 +316,11 @@ function withOptionalFlags(signal, opts = EMPTY_OPTIONAL) {
 function optionalHint(action, opts) {
     if (opts.optionalBuy) {
         const exp = opts.quantForecast?.expectedPct;
-        return Number.isFinite(exp)
-            ? `Model leans up ~${exp >= 0 ? '+' : ''}${exp}% · optional buy zone`
-            : 'Model sees a low-price upside study';
+        return Number.isFinite(exp) ? `Up ~${exp >= 0 ? '+' : ''}${exp}% · optional buy` : 'Optional buy';
     }
     if (opts.optionalSell) {
         const p = opts.quantForecast?.unrealizedPct;
-        const entry = opts.quantForecast?.entryRef;
-        if (Number.isFinite(p) && Number.isFinite(entry)) {
-            return `~${p >= 0 ? '+' : ''}${p}% vs ₱${entry.toFixed(2)} entry · optional sell`;
-        }
-        return 'Meaningful paper profit · optional sell study';
+        return Number.isFinite(p) ? `~${p >= 0 ? '+' : ''}${p}% profit · optional sell` : 'Optional sell';
     }
     return null;
 }
@@ -435,10 +422,10 @@ export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
     if (forecast.ok) {
         if (forecast.expectedPct >= 2) {
             score += 1;
-            bits.push(`math forward model ~+${forecast.expectedPct}% over ~${FORWARD_DAYS} sessions`);
+            bits.push(`ensemble ~+${forecast.expectedPct}% / ${FORWARD_SESSIONS}S`);
         } else if (forecast.expectedPct <= -2) {
             score -= 1;
-            bits.push(`math forward model ~${forecast.expectedPct}% over ~${FORWARD_DAYS} sessions`);
+            bits.push(`ensemble ~${forecast.expectedPct}% / ${FORWARD_SESSIONS}S`);
         }
     }
 
@@ -448,19 +435,19 @@ export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
 
     const why = bits.length
         ? bits.slice(0, 3).join('; ') + '.'
-        : 'Signals are mixed or light, so the safer default is to wait.';
+        : 'Mixed signals. Wait.';
     const hint = optionalHint(action, opt);
     const modelLine = forecast.ok
-        ? ` Math model (momentum + mean reversion + drift/vol on historical closes) points to about ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% over ~${FORWARD_DAYS} sessions vs study entry ₱${forecast.entryRef.toFixed(2)}.`
+        ? ` Ensemble ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% / ${FORWARD_SESSIONS}S vs ₱${forecast.entryRef.toFixed(2)}.`
         : '';
 
     if (action === 'BUY') {
         return withOptionalFlags({
             action: 'BUY',
             tone: 'buy',
-            cardHint: hint || 'Momentum and levels lean supportive',
-            meaning: 'Buying means the app sees a better setup to study an entry than to sell or sit idle. You would still size small, use a stop idea, and treat this as practice, not a guaranteed win.',
-            reason: `Why BUY: ${why}${modelLine}`
+            cardHint: hint || 'Levels lean supportive',
+            meaning: 'Study an entry with small size and an ATR trail. Practice only.',
+            reason: `BUY: ${why}${modelLine}`
         }, opt);
     }
 
@@ -468,18 +455,18 @@ export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
         return withOptionalFlags({
             action: 'SELL',
             tone: 'sell',
-            cardHint: hint || 'Momentum and levels look stretched',
-            meaning: 'Selling means the app sees more risk of further weakness than of a clean bounce. If you already hold shares for study, this is a cue to tighten risk or step aside, not a broker order.',
-            reason: `Why SELL: ${why}${modelLine}`
+            cardHint: hint || 'Levels look stretched',
+            meaning: 'Study tightening risk or stepping aside. Not a broker order.',
+            reason: `SELL: ${why}${modelLine}`
         }, opt);
     }
 
     return withOptionalFlags({
         action: 'HOLD',
         tone: 'hold',
-        cardHint: hint || 'No clear edge either way',
-        meaning: 'Holding means stay patient. The chart does not show a clear buy or sell edge right now, so waiting for a cleaner signal is the beginner-friendly move.',
-        reason: `Why HOLD: ${why}${modelLine}`
+        cardHint: hint || 'No clear edge',
+        meaning: 'Wait for a cleaner signal.',
+        reason: `HOLD: ${why}${modelLine}`
     }, opt);
 }
 
@@ -652,37 +639,58 @@ export function forecastInvestment(investPesos, pctChange, latestClose) {
 }
 
 /**
- * Educational starter buy idea for beginners.
- * Entry leans toward recent support; size risks a fixed peso budget with a ~1.5× ATR stop.
+ * Starter size with ATR trailing stop (1.5×ATR below entry/last).
+ * Optional take-profit ladder from a forecast band when provided.
  */
-export function suggestPurchase(latestClose, support, resistance, atrValue, riskPesos = 1000) {
+export function suggestPurchase(
+    latestClose,
+    support,
+    resistance,
+    atrValue,
+    riskPesos = 1000,
+    forecastBand = null
+) {
     if (!latestClose || latestClose <= 0) {
         return { entry: null, shares: null, spend: null, stop: null, note: 'Need price data first.' };
     }
 
     let entry = latestClose;
     if (support != null && support > 0) {
-        // Prefer a pullback toward support, but never invent a price above the last close as “cheaper.”
         entry = Math.min(latestClose, support + (latestClose - support) * 0.35);
         if (entry > latestClose) entry = latestClose;
         if (entry < support) entry = support;
     }
     entry = parseFloat(entry.toFixed(2));
 
-    const stopDistance = atrValue && atrValue > 0
-        ? Math.max(atrValue * 1.5, entry * 0.015)
-        : entry * 0.03;
-    const stop = parseFloat(Math.max(0.01, entry - stopDistance).toFixed(2));
-    const riskPerShare = Math.max(entry - stop, entry * 0.01);
+    const atr = atrValue && atrValue > 0 ? atrValue : entry * 0.02;
+    const trailMult = 1.5;
+    const trailStop = parseFloat(Math.max(0.01, Math.min(entry, latestClose) - atr * trailMult).toFixed(2));
+    const riskPerShare = Math.max(entry - trailStop, entry * 0.01);
     const shares = Math.max(1, Math.floor(riskPesos / riskPerShare));
     const spend = parseFloat((shares * entry).toFixed(2));
+
+    let takeProfits = null;
+    if (forecastBand && Number.isFinite(forecastBand.low) && Number.isFinite(forecastBand.high)) {
+        const lo = Math.min(forecastBand.low, forecastBand.high);
+        const hi = Math.max(forecastBand.low, forecastBand.high);
+        const span = Math.max(hi - lo, entry * 0.005);
+        takeProfits = [
+            parseFloat((entry + span * 0.35).toFixed(2)),
+            parseFloat((entry + span * 0.65).toFixed(2)),
+            parseFloat(hi.toFixed(2))
+        ];
+    }
 
     return {
         entry,
         shares,
         spend,
-        stop,
+        stop: trailStop,
+        trailStop,
+        trailMult,
+        atr: parseFloat(atr.toFixed(4)),
+        takeProfits,
         riskPesos,
-        note: `Example size if you risk about ₱${riskPesos.toLocaleString('en-PH')} on the idea (educational only).`
+        note: `ATR trail ${trailMult}× · risk ~₱${riskPesos.toLocaleString('en-PH')}`
     };
 }
