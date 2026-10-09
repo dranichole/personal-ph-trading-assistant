@@ -9,12 +9,21 @@ import { DataService, AIService } from './services.js';
 import { summarizeBars } from './indicators.js';
 import { UIController } from './ui.js';
 import { ScalpEngine } from './scalp/engine.js';
+import { mergeUniverse, PSE_UNIVERSE } from './pse-universe.js';
+import { scanMetrics, evaluateRules } from './scanner.js';
+import { MarketReplay, pickReplayBar } from './replay.js';
+import { ScalpPopout } from './popout.js';
 
 class TradingAssistantApp {
     constructor() {
         this.state = new AppState();
         this.ui = new UIController(this);
         this.scalp = new ScalpEngine();
+        this.replay = new MarketReplay();
+        this.popout = new ScalpPopout();
+        this.scannerUniverse = PSE_UNIVERSE.slice();
+        this.scannerResults = [];
+        this._replayUnsub = null;
     }
 
     async init() {
@@ -30,10 +39,81 @@ class TradingAssistantApp {
         this.startAutoRefresh();
         this.ui.bindScalp(this.scalp);
         this.scalp.onFill = (payload) => this.logPaperFill(payload);
+        this.ui.bindReplay(this.replay);
+        this.loadScannerUniverse().catch(() => {});
+    }
+
+    async loadScannerUniverse() {
+        try {
+            const res = await fetch('/api/universe');
+            if (!res.ok) throw new Error('universe');
+            const data = await res.json();
+            this.scannerUniverse = mergeUniverse(data.stocks || []);
+        } catch {
+            this.scannerUniverse = mergeUniverse([]);
+        }
+        this.ui.syncScannerPresets?.();
+    }
+
+    async openScanner() {
+        await this.stopScalp();
+        this.replay?.pause();
+        this.state.currentView = 'scanner';
+        this.ui.showScanner();
+    }
+
+    async runScanner(rules) {
+        const list = (this.scannerUniverse || PSE_UNIVERSE).slice(
+            0,
+            CONFIG.scanner?.maxUniverse || 80
+        );
+        const conc = CONFIG.scanner?.concurrency || 4;
+        const range = CONFIG.scanner?.range || '1mo';
+        const hits = [];
+        this.ui.setScannerStatus(`Scanning 0/${list.length}…`);
+
+        for (let i = 0; i < list.length; i += conc) {
+            const batch = list.slice(i, i + conc);
+            const settled = await Promise.allSettled(
+                batch.map(async (row) => {
+                    const snap = await this.ensureSnapshot(row.ticker, range, {
+                        preferLive: true
+                    });
+                    const metrics = scanMetrics(snap?.bars);
+                    if (!metrics) return null;
+                    const { pass, detail } = evaluateRules(metrics, rules);
+                    if (!pass) return null;
+                    return {
+                        ...row,
+                        metrics,
+                        detail,
+                        source: snap?.source
+                    };
+                })
+            );
+            settled.forEach((r) => {
+                if (r.status === 'fulfilled' && r.value) hits.push(r.value);
+            });
+            this.ui.setScannerStatus(`Scanning ${Math.min(i + conc, list.length)}/${list.length} · ${hits.length} hits`);
+            this.ui.renderScannerResults(hits);
+        }
+
+        this.scannerResults = hits.sort(
+            (a, b) => (b.metrics?.volRatio || 0) - (a.metrics?.volRatio || 0)
+        );
+        this.ui.setScannerStatus(`Done · ${hits.length} of ${list.length} matched`);
+        this.ui.renderScannerResults(this.scannerResults);
+        return this.scannerResults;
     }
 
     logPaperFill({ order, meta, ticker, risk }) {
         if (!order) return;
+        if (order.status === 'ticket' || order.ticketText) {
+            this.ui.showTicketPreview(order);
+            this.logLocalTicket(order);
+            if (this.state.currentView === 'journal') this.ui.renderJournal();
+            return;
+        }
         const side = order.side;
         const px = Number(order.limitPrice) || 0;
         const qty = order.qty;
@@ -76,7 +156,74 @@ class TradingAssistantApp {
     }
 
     async stopScalp() {
+        this.replay?.pause();
         await this.scalp.stop();
+    }
+
+    async startReplay() {
+        const ticker =
+            this.scalp.ticker ||
+            this.ui.els.scalpTickerSelect?.value ||
+            this.state.watchlist.find((s) => !s.preIpo)?.ticker ||
+            'DMC';
+        const snap =
+            this.state.getSnapshot(ticker, '3mo') ||
+            (await this.ensureSnapshot(ticker, '3mo'));
+        const bar = pickReplayBar(snap?.bars);
+        if (!bar) {
+            this.ui.setReplayStatus('Need more history to replay.');
+            return;
+        }
+        await this.scalp.stop();
+        if (this._replayUnsub) this._replayUnsub();
+        const n = this.replay.load(bar, { ticks: 200 });
+        this.ui.setReplayStatus(
+            `${ticker} · ${bar.date || 'day'} · ${n} ticks · OHLC path replay`
+        );
+        this._replayUnsub = this.replay.onTick((payload) => {
+            this.ui.renderReplayTick(payload);
+            // Feed synthetic ticks into candle aggregator for chart practice
+            this.scalp._lastTick = payload.tick;
+            this.scalp.feedMode = 'replay';
+            this.scalp.aggregator.pushTick(payload.tick);
+            this.scalp.tape = payload.tape;
+            this.scalp.dom = payload.dom;
+            this.scalp._schedulePublish();
+        });
+        // Fresh aggregator for replay session
+        const { CandleAggregator } = await import('./scalp/candles.js');
+        const tf = this.state.scalpTimeframe || '1m';
+        const ms = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000 }[tf] || 60_000;
+        this.scalp.ticker = String(ticker).toUpperCase();
+        this.scalp.aggregator = new CandleAggregator(ms);
+        this.scalp.tape = [];
+        this.replay.play();
+    }
+
+    setReplaySpeed(speed) {
+        this.replay.setSpeed(speed);
+        this.ui.syncReplaySpeed(speed);
+    }
+
+    async openScalpPopout() {
+        await this.popout.openWindow();
+        this.ui.pushScalpPopout();
+    }
+
+    logLocalTicket(order) {
+        if (!order?.ticketText) return;
+        this.state.addJournalEntry({
+            id: crypto.randomUUID(),
+            ticker: String(order.ticker).toUpperCase(),
+            date: new Date().toISOString().slice(0, 10),
+            thesis: `Local ticket (${order.status}): ${order.side} ${order.qty}`,
+            invalidation: '',
+            outcome: 'open',
+            strategy: 'Local ticket',
+            tag: 'Local ticket',
+            source: 'ticket',
+            createdAt: Date.now()
+        });
     }
 
     async loadDashboardData() {

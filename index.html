@@ -48,8 +48,9 @@
                         <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
                     </svg>
                 </button>
-                <nav class="flex text-xs font-semibold uppercase tracking-wide gap-1">
+                <nav class="flex text-xs font-semibold uppercase tracking-wide gap-1 flex-wrap justify-end">
                     <button id="navDashboard" class="nav-pill px-3 py-1.5 rounded-full active">Watchlist</button>
+                    <button id="navScanner" class="nav-pill px-3 py-1.5 rounded-full">Scanner</button>
                     <button id="navScalp" class="nav-pill px-3 py-1.5 rounded-full">Scalp</button>
                     <button id="navJournal" class="nav-pill px-3 py-1.5 rounded-full">Journal</button>
                 </nav>
@@ -156,6 +157,45 @@
             </div>
             <div id="dashboardSections"></div>
             <p id="emptyWatchlist" class="hidden text-sm text-zinc-500">No names on the watchlist. Add a PSE ticker above.</p>
+        </section>
+
+        <section id="scannerView" class="hidden fade-in">
+            <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-zinc-900">Market Scanner</h2>
+                    <p class="text-sm text-zinc-500 mt-1 has-tip">PSE discovery · quantitative filters over liquid Main Board names
+                        <span class="tip-bubble">Scans curated PSE universe (+ phisix all-stocks when available). Filters apply RSI, volume vs 20d avg, SMA relationships.</span>
+                    </p>
+                </div>
+                <div class="flex flex-wrap gap-2 items-center">
+                    <select id="scannerPreset" class="px-3 py-2 text-xs border border-zinc-200 rounded bg-white"></select>
+                    <button type="button" id="scannerRunBtn" class="px-3 py-2 btn-solid text-xs font-semibold uppercase tracking-wide rounded">Run scan</button>
+                    <span id="scannerStatus" class="text-[10px] text-zinc-500">Idle</span>
+                </div>
+            </div>
+            <div class="bg-white border border-zinc-200 rounded-lg p-4 mb-4">
+                <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Filter rules (AND)</p>
+                <div id="scannerRules" class="space-y-2 mb-3"></div>
+                <button type="button" id="scannerAddRuleBtn" class="text-[11px] font-semibold text-zinc-600 underline">+ Add rule</button>
+                <p class="text-[10px] text-zinc-400 mt-2">Example: RSI &lt; 30 AND Vol/20d ≥ 2 AND Price − SMA50 &gt; 0</p>
+            </div>
+            <div class="overflow-x-auto bg-white border border-zinc-200 rounded-lg shadow-sm">
+                <table class="watchlist-table w-full text-left text-xs">
+                    <thead>
+                        <tr class="border-b border-zinc-100 text-[10px] uppercase tracking-widest text-zinc-500">
+                            <th class="px-3 py-2">Ticker</th>
+                            <th class="px-3 py-2">Name</th>
+                            <th class="px-3 py-2">Last</th>
+                            <th class="px-3 py-2">RSI</th>
+                            <th class="px-3 py-2">Vol×</th>
+                            <th class="px-3 py-2">vs SMA50</th>
+                            <th class="px-3 py-2"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="scannerResultsBody"></tbody>
+                </table>
+            </div>
+            <p id="scannerEmpty" class="mt-3 text-sm text-zinc-500">Run a scan to discover names matching your rules.</p>
         </section>
 
         <section id="detailView" class="hidden fade-in">
@@ -289,6 +329,13 @@
                             </div>
                             <ul id="predictCatalystList" class="space-y-1.5 text-[11px] text-zinc-600"></ul>
                         </div>
+                        <div id="predictDividendBox" class="bg-white border border-zinc-200 rounded-lg shadow-sm p-3">
+                            <div class="has-tip mb-2">
+                                <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Dividends / ex-dates</p>
+                                <span class="tip-bubble">Ex-div days often gap down and skew GBM/OU/ROC bands. Educational calendar — verify with PSE disclosures.</span>
+                            </div>
+                            <ul id="predictDividendList" class="space-y-1.5 text-[11px] text-zinc-600"></ul>
+                        </div>
                     </div>
                 </div>
 
@@ -401,6 +448,22 @@
                     <select id="scalpTickerSelect" class="px-3 py-2 text-xs border border-zinc-200 rounded bg-white text-zinc-700 font-semibold"></select>
                     <div id="scalpTfButtons" class="flex gap-1 bg-zinc-100 p-1 rounded"></div>
                     <span id="scalpFeedBadge" class="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded bg-zinc-100 text-zinc-500">Idle</span>
+                    <button type="button" id="scalpPopoutBtn" class="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide rounded border border-zinc-200 text-zinc-600" title="Tear DOM & Tape onto another window">Pop out</button>
+                </div>
+            </div>
+            <div id="replayBar" class="mb-3 flex flex-wrap items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
+                <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mr-1">Market replay</p>
+                <button type="button" id="replayLoadBtn" class="px-2 py-1 text-[10px] font-semibold rounded border border-zinc-200 bg-white">Load random day</button>
+                <button type="button" id="replayPlayBtn" class="px-2 py-1 text-[10px] font-semibold rounded border border-zinc-200 bg-white">Play</button>
+                <button type="button" id="replayPauseBtn" class="px-2 py-1 text-[10px] font-semibold rounded border border-zinc-200 bg-white">Pause</button>
+                <div class="flex gap-1 bg-zinc-100 p-0.5 rounded" id="replaySpeedBtns">
+                    <button type="button" data-replay-speed="1" class="px-2 py-0.5 text-[10px] font-bold rounded text-zinc-500">1×</button>
+                    <button type="button" data-replay-speed="2" class="px-2 py-0.5 text-[10px] font-bold rounded bg-white shadow-sm text-zinc-900">2×</button>
+                    <button type="button" data-replay-speed="5" class="px-2 py-0.5 text-[10px] font-bold rounded text-zinc-500">5×</button>
+                </div>
+                <span id="replayStatus" class="text-[10px] text-zinc-500">PSE hours 9:30–15:00 · practice off-hours</span>
+                <div class="flex-1 min-w-[120px] h-1.5 bg-zinc-200 rounded overflow-hidden">
+                    <div id="replayProgress" class="h-full bg-zinc-800 w-0 transition-[width]"></div>
                 </div>
             </div>
 
@@ -441,16 +504,20 @@
                     <div class="bg-white border border-zinc-200 rounded-lg p-3">
                         <div class="flex items-center justify-between gap-2 mb-2">
                             <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Paper ticket</p>
-                            <select id="scalpBrokerSelect" class="text-[10px] border border-zinc-200 rounded px-1.5 py-1">
+                            <select id="scalpBrokerSelect" class="field-control text-[11px] font-semibold border rounded px-2 py-1">
                                 <option value="paper">Paper</option>
-                                <option value="ibkr">IBKR</option>
-                                <option value="alpaca">Alpaca</option>
+                                <option value="dragonfi">DragonFI ticket</option>
+                                <option value="firstmetro">FirstMetroSec ticket</option>
+                                <option value="bpi">BPI Trade ticket</option>
                             </select>
                         </div>
-                        <p id="scalpBrokerStatus" class="text-[10px] text-zinc-500 mb-2">Paper · browser only</p>
+                        <p id="scalpBrokerStatus" class="text-[11px] text-zinc-500 mb-2">Paper · browser only</p>
+                        <pre id="scalpTicketPreview" class="hidden mb-2 p-2 text-[10px] font-mono bg-zinc-50 border border-zinc-100 rounded overflow-x-auto whitespace-pre-wrap"></pre>
+                        <input id="scalpWebhookInput" type="url" placeholder="Optional ticket webhook URL"
+                            class="field-control hidden mb-2 w-full px-2 py-1.5 text-[11px] font-semibold border rounded" aria-label="Webhook URL">
                         <div class="flex gap-2 mb-2">
                             <input id="scalpQtyInput" type="number" min="1" step="1" value="100"
-                                class="w-full px-2 py-1.5 text-sm font-semibold rounded border border-zinc-200" aria-label="Order quantity">
+                                class="field-control w-full px-3 py-2 text-sm font-bold rounded border" aria-label="Order quantity">
                         </div>
                         <div class="grid grid-cols-2 gap-2">
                             <button type="button" id="scalpBuyAskBtn" class="py-2 text-xs font-bold uppercase tracking-wide rounded bg-emerald-50 text-emerald-700 border border-emerald-100" title="Shift+B">Buy Ask</button>

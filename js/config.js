@@ -172,9 +172,12 @@ export const CONFIG = {
         defaultTimeframe: '1m',
         wsUrl: '', // e.g. wss://your-tick-gateway/stream
         defaultBroker: 'paper',
-        brokers: {
-            ibkr: { enabled: false, gatewayUrl: '' },
-            alpaca: { enabled: false, key: '', secret: '', paper: true }
-        }
+        /** Optional webhook for LocalTicketBroker copy payloads */
+        ticketWebhook: ''
+    },
+    scanner: {
+        range: '1mo',
+        concurrency: 4,
+        maxUniverse: 80
     }
 };

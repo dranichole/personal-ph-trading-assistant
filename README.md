@@ -44,7 +44,17 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - BUY/SELL/HOLD + exclusive OPTIONAL BUY/SELL from GBM + OU + ROC ensemble votes + Wilder RSI
 - Position target via **¼-Kelly × ATR stop** (never shown as a red “loss” figure)
 - Predict: custom ensemble weight sliders + 30-day model band hit-rate scores
-- Chart: denser 60–90 candles, 1D/4H/1H toggles, catalyst flags, synced crosshairs + RSI pane, zoom/pan
+- Chart: denser 60–90 candles, 1D/4H/1H toggles, catalyst + **ex-dividend** flags, synced crosshairs + RSI pane, zoom/pan
+
+### Market Scanner
+- Dedicated **Scanner** tab over a liquid PSE universe (curated list + `/api/universe` when phisix all-stocks is up)
+- AND-rule builder / presets (e.g. RSI &lt; 30 AND Vol ≥ 2× 20d avg AND Price &gt; SMA50)
+- Open detail or add hits to the watchlist
+
+### Scalp extras
+- **Market Replay**: random historical day → synthetic tape/DOM at 1×/2×/5× for after-hours practice
+- **Pop out** DOM + Tape (multi-monitor via `window.open` + optional Window Management API)
+- Local PSE tickets (DragonFI / FirstMetroSec / BPI Trade) as copy-paste + optional webhook — IBKR/Alpaca removed (no PSE retail routing)
 
 ### Beginner helpers
 - Clear “last close” wording (ending market price, not a sale price)
@@ -79,7 +89,8 @@ trading_assistant/
 │   ├── analyze.js       # Vercel serverless Gemini proxy
 │   ├── quote.js         # Vercel serverless PSE Edge / phisix proxy
 │   ├── news.js          # Headlines proxy for Predict catalysts
-│   └── ticks.js         # SSE tick relay (phisix last price)
+│   ├── ticks.js         # SSE tick relay (phisix last price)
+│   └── universe.js      # PSE all-stocks universe
 ├── css/
 │   └── styles.css       # Theme tokens, tooltips, loaders
 ├── js/
@@ -91,6 +102,7 @@ trading_assistant/
 │   ├── state.js         # Cache, watchlist/journal persistence, theme
 │   ├── ui.js            # DOM + Chart.js
 │   └── scalp/           # Day-trade engine (ticks, candles, signals, paper broker)
+├── dev_server.py        # Local static + /api routes (use this, not plain http.server)
 ├── index.html
 └── README.md
 ```
@@ -99,19 +111,25 @@ trading_assistant/
 
 ES6 modules require HTTP(S). Do not open `index.html` as a `file://` URL.
 
+**Do not use** plain `python -m http.server` alone — it cannot run `/api/quote`, `/api/ticks`, `/api/news`, or `/api/universe`, so those routes 404 in the terminal.
+
 1. **Clone and enter the repo**
    ```bash
    git clone <your-repo-url>
    cd trading_assistant
    ```
 
-2. **Serve the static app**
+2. **Start the local API + static server**
    ```bash
-   python -m http.server 8000
+   python dev_server.py
    ```
-   Or use VS Code **Live Server**.
+   Optional port: `python dev_server.py 8080`
 
-3. **Open** `http://localhost:8000`
+3. **Open** `http://127.0.0.1:8000`
+
+`dev_server.py` serves the SPA and implements `/api/quote`, `/api/universe`, `/api/news`, and `/api/ticks` via phisix (live PSE last prices / daily closes).
+
+Alternatively: `npx vercel dev` if you have Node + Vercel CLI (runs the real `api/*.js` handlers).
 
 ### AI analysis locally
 

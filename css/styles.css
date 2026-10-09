@@ -34,6 +34,12 @@ html[data-theme="day"] {
     --chart-line-fill-bottom: rgba(14, 116, 144, 0);
     --loader-track: #e8e4e7;
     --loader-head: #c0265e;
+    --input-bg: #ffffff;
+    --input-ink: #18181b;
+    --input-placeholder: #6b7280;
+    --option-bg: #ffffff;
+    --option-ink: #18181b;
+    color-scheme: light;
 }
 
 html[data-theme="night"] {
@@ -42,9 +48,15 @@ html[data-theme="night"] {
     --card: #1f1f1f;
     --card-soft: #262626;
     --ink: #f5f5f5;
-    --muted: #b4b4b4;
-    --faint: #8a8a8a;
-    --line: #333333;
+    --muted: #d4d4d4;
+    --faint: #a3a3a3;
+    --line: #404040;
+    --input-bg: #2a2a2a;
+    --input-ink: #fafafa;
+    --input-placeholder: #a3a3a3;
+    --option-bg: #2a2a2a;
+    --option-ink: #fafafa;
+    color-scheme: dark;
     --accent: #e52e71;
     --accent-2: #ff8a00;
     --accent-deep: #9c27b0;
@@ -70,6 +82,78 @@ html[data-theme="night"] {
 html, body {
     background: var(--page);
     color: var(--ink);
+}
+
+/* High-contrast form controls (night mode was light-on-light / washed selects) */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+    background-color: var(--input-bg) !important;
+    color: var(--input-ink) !important;
+    border-color: var(--line) !important;
+    caret-color: var(--input-ink);
+}
+input::placeholder,
+textarea::placeholder {
+    color: var(--input-placeholder) !important;
+    opacity: 1;
+}
+select option,
+select optgroup {
+    background-color: var(--option-bg);
+    color: var(--option-ink);
+}
+input:focus,
+select:focus,
+textarea:focus {
+    outline: 2px solid color-mix(in srgb, var(--chart-line) 55%, transparent);
+    outline-offset: 1px;
+}
+
+/* Scanner rule rows + paper ticket */
+#scannerRules select,
+#scannerRules input,
+#scalpBrokerSelect,
+#scalpQtyInput,
+#scalpWebhookInput,
+#scalpTickerSelect,
+#scannerPreset {
+    background-color: var(--input-bg) !important;
+    color: var(--input-ink) !important;
+    font-weight: 600;
+}
+#scannerRules [data-rule-remove] {
+    color: var(--muted) !important;
+    text-decoration: underline;
+}
+#scannerAddRuleBtn {
+    color: var(--chart-line) !important;
+}
+
+#scalpQtyInput {
+    font-size: 0.95rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.02em;
+}
+#scalpBuyBtn,
+#scalpSellBtn,
+#scalpTrailBtn {
+    background: var(--card-soft) !important;
+    color: var(--ink) !important;
+    border-color: var(--line) !important;
+    font-weight: 700 !important;
+}
+#scalpBuyAskBtn {
+    color: var(--up) !important;
+    border-color: color-mix(in srgb, var(--up) 45%, var(--line)) !important;
+}
+#scalpSellBidBtn {
+    color: var(--down) !important;
+    border-color: color-mix(in srgb, var(--down) 45%, var(--line)) !important;
+}
+#scalpFlattenBtn {
+    background: var(--btn) !important;
+    color: var(--btn-ink) !important;
 }
 
 body {
@@ -210,8 +294,8 @@ header.sticky {
 }
 
 .forecast-box input[type="number"] {
-    background: var(--card);
-    color: var(--ink);
+    background: var(--input-bg) !important;
+    color: var(--input-ink) !important;
     border: 1px solid var(--line);
 }
 
@@ -686,4 +770,21 @@ header.sticky {
 #rsiChartCanvas {
     width: 100% !important;
     height: 112px !important;
+}
+
+#replayProgress {
+    transition: width 0.12s linear;
+}
+#scalpTicketPreview {
+    max-height: 8rem;
+    color: var(--ink) !important;
+    background: var(--card-soft) !important;
+}
+.field-control {
+    background-color: var(--input-bg) !important;
+    color: var(--input-ink) !important;
+    border-color: var(--line) !important;
+}
+.nav-pill {
+    white-space: nowrap;
 }

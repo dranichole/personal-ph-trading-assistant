@@ -1,6 +1,7 @@
 /**
  * Broker adapters for chart-side execution.
- * PaperBroker is local/educational. Live brokers are stubs until API keys are configured.
+ * PaperBroker = local fills. LocalTicketBroker formats orders for PSE retail terminals
+ * (DragonFI / FirstMetroSec PRO / BPI Trade) — IBKR/Alpaca do not route PSE retail.
  */
 
 const PAPER_KEY = 'ta_paper_broker_v1';
@@ -87,60 +88,123 @@ export class PaperBroker {
     }
 }
 
-/** Stub — wire Interactive Brokers Client Portal / TWS when keys exist. */
-export class InteractiveBrokersStub {
-    constructor() {
-        this.id = 'ibkr';
-        this.label = 'IBKR';
+const LOCAL_BROKERS = {
+    dragonfi: {
+        id: 'dragonfi',
+        label: 'DragonFI',
+        tip: 'Copy ticket into DragonFI / COL-style blotter. No public retail order API.'
+    },
+    firstmetro: {
+        id: 'firstmetro',
+        label: 'FirstMetroSec PRO',
+        tip: 'Format for FirstMetroSec PRO terminal paste.'
+    },
+    bpi: {
+        id: 'bpi',
+        label: 'BPI Trade',
+        tip: 'Format for BPI Trade ticket entry.'
     }
-    async connect() {
-        return {
-            ok: false,
-            message: 'IBKR not connected. Add Client Portal URL + auth in CONFIG.brokers.ibkr.'
-        };
-    }
-    getPosition() {
-        return null;
-    }
-    listOrders() {
-        return [];
-    }
-    async placeOrder() {
-        throw new Error('Connect IBKR first.');
-    }
-    async updateStop() {
-        throw new Error('Connect IBKR first.');
-    }
-}
+};
 
-/** Stub — Alpaca paper/live REST when key/secret set. */
-export class AlpacaStub {
-    constructor() {
-        this.id = 'alpaca';
-        this.label = 'Alpaca';
+/**
+ * Formats PSE retail tickets for copy-paste / optional webhook.
+ * Does not claim live routing — local brokers rarely expose public order APIs.
+ */
+export class LocalTicketBroker {
+    constructor(id = 'dragonfi') {
+        const meta = LOCAL_BROKERS[id] || LOCAL_BROKERS.dragonfi;
+        this.id = meta.id;
+        this.label = meta.label;
+        this.tip = meta.tip;
+        this.lastTicket = null;
+        this.webhookUrl = '';
     }
+
     async connect() {
         return {
-            ok: false,
-            message: 'Alpaca not connected. Set CONFIG.brokers.alpaca key/secret for live routing.'
+            ok: true,
+            message: `${this.label}: copy-paste ticket ready. Live PSE routing needs broker terminal.`
         };
     }
+
     getPosition() {
         return null;
     }
+
     listOrders() {
-        return [];
+        return this.lastTicket ? [this.lastTicket] : [];
     }
-    async placeOrder() {
-        throw new Error('Connect Alpaca first.');
+
+    formatTicket({ ticker, side, qty, type = 'market', limitPrice = null, stopPrice = null }) {
+        const t = String(ticker).toUpperCase();
+        const q = Math.max(1, Math.floor(Number(qty) || 0));
+        const px = limitPrice ?? stopPrice;
+        const lines = [
+            `BROKER=${this.label}`,
+            `SYMBOL=${t}`,
+            `SIDE=${String(side).toUpperCase()}`,
+            `QTY=${q}`,
+            `TYPE=${String(type).toUpperCase()}`,
+            px != null ? `PRICE=${Number(px).toFixed(4)}` : 'PRICE=MKT',
+            stopPrice != null ? `STOP=${Number(stopPrice).toFixed(4)}` : null,
+            `TIF=DAY`,
+            `NOTE=Educational ticket — paste into ${this.label} terminal`
+        ].filter(Boolean);
+        return lines.join('\n');
     }
-    async updateStop() {
-        throw new Error('Connect Alpaca first.');
+
+    async placeOrder(order) {
+        const text = this.formatTicket(order);
+        this.lastTicket = {
+            id: `T-${Date.now()}`,
+            ...order,
+            ticker: String(order.ticker).toUpperCase(),
+            status: 'ticket',
+            ticketText: text,
+            at: Date.now()
+        };
+
+        if (this.webhookUrl) {
+            try {
+                await fetch(this.webhookUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        broker: this.id,
+                        ticket: text,
+                        order: this.lastTicket
+                    })
+                });
+            } catch (err) {
+                console.warn('Ticket webhook failed', err);
+            }
+        }
+
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            /* UI will show ticket for manual copy */
+        }
+
+        return this.lastTicket;
+    }
+
+    async updateStop({ ticker, stopPrice }) {
+        return this.placeOrder({
+            ticker,
+            side: 'sell',
+            qty: 0,
+            type: 'stop',
+            stopPrice
+        });
     }
 }
 
 export function createBroker(id = 'paper') {
-    if (id === 'ibkr') return new InteractiveBrokersStub();
-    if (id === 'alpaca') return new AlpacaStub();
+    if (id === 'dragonfi' || id === 'firstmetro' || id === 'bpi') {
+        return new LocalTicketBroker(id);
+    }
     return new PaperBroker();
 }
+
+export { LOCAL_BROKERS };
