@@ -29,6 +29,32 @@ class TradingAssistantApp {
         this.evaluateAlerts({ notifyBrowser: false });
         this.startAutoRefresh();
         this.ui.bindScalp(this.scalp);
+        this.scalp.onFill = (payload) => this.logPaperFill(payload);
+    }
+
+    logPaperFill({ order, meta, ticker, risk }) {
+        if (!order) return;
+        const side = order.side;
+        const px = Number(order.limitPrice) || 0;
+        const qty = order.qty;
+        const strategy = meta?.tag || meta?.strategy || 'Paper';
+        this.state.addJournalEntry({
+            id: crypto.randomUUID(),
+            ticker: String(ticker || order.ticker).toUpperCase(),
+            date: new Date().toISOString().slice(0, 10),
+            thesis: `Paper ${side.toUpperCase()} ${qty} @ ₱${px.toFixed(2)}${risk?.trail ? ` · trail ₱${risk.trail}` : ''}`,
+            invalidation: risk?.trail ? `Stop / trail ₱${risk.trail}` : '',
+            outcome: meta?.flatten ? 'scratch' : 'open',
+            strategy,
+            tag: strategy,
+            pnl: null,
+            fillPrice: px,
+            qty,
+            side,
+            source: 'paper',
+            createdAt: Date.now()
+        });
+        if (this.state.currentView === 'journal') this.ui.renderJournal();
     }
 
     async openScalp(ticker) {
@@ -321,7 +347,20 @@ class TradingAssistantApp {
         this.ui.showDetailsLoading(stock);
         this.ui.setChartBusy(true, 'Loading chart…');
         try {
-            const snapshot = await this.ensureSnapshot(ticker, this.state.activeRange);
+            let snapshot = await this.ensureSnapshot(ticker, this.state.activeRange);
+            // Prefer denser history for chart (60–90 sessions) when the selected range is sparse
+            if ((snapshot?.bars?.length || 0) < 45) {
+                const denser = await this.ensureSnapshot(ticker, '3mo');
+                if ((denser?.bars?.length || 0) > (snapshot?.bars?.length || 0)) {
+                    snapshot = {
+                        ...snapshot,
+                        bars: denser.bars.slice(-90),
+                        denserSource: '3mo'
+                    };
+                }
+            } else if (snapshot.bars.length > 90) {
+                snapshot = { ...snapshot, bars: snapshot.bars.slice(-90) };
+            }
             if (!this.state.isLatestChartRequest(requestId)) return;
             this.ui.showDetails(stock, snapshot);
         } finally {
@@ -524,7 +563,16 @@ class TradingAssistantApp {
     }
 
     setJournalOutcome(id, outcome) {
-        this.state.updateJournalEntry(id, { outcome });
+        const entry = this.state.journal.find((e) => e.id === id);
+        const patch = { outcome };
+        // Rough educational PnL when paper fill price exists and user marks win/loss
+        if (entry && Number.isFinite(Number(entry.fillPrice)) && Number.isFinite(Number(entry.qty))) {
+            const notional = Number(entry.fillPrice) * Number(entry.qty);
+            if (outcome === 'win') patch.pnl = parseFloat((notional * 0.02).toFixed(2));
+            else if (outcome === 'loss') patch.pnl = parseFloat((-notional * 0.015).toFixed(2));
+            else if (outcome === 'scratch') patch.pnl = 0;
+        }
+        this.state.updateJournalEntry(id, patch);
         this.ui.renderJournal();
         if (this.state.activeStock) this.ui.renderDetailJournal(this.state.activeStock.ticker);
     }

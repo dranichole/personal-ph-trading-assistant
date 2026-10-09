@@ -136,11 +136,24 @@ export const CONFIG = {
     refreshMsOpen: 5 * 60 * 1000,
     refreshMsClosed: 30 * 60 * 1000,
     starterRiskPesos: 1000,
+    /** Ensemble mix for Predict + signals (GBM / OU mean-rev / ROC momentum). */
+    modelWeights: {
+        gbm: 20,
+        meanReversion: 30,
+        momentum: 50
+    },
+    /** Implied practice capital for ¼-Kelly sizing (risk unit = starterRiskPesos). */
+    practiceCapitalPesos: 20000,
     /** Session / browser alerts (no email). Day-over-day % move thresholds. */
     alerts: {
         buyDipPct: -3,
         sellRisePct: 3,
         enabledByDefault: true
+    },
+    storageKeysExtra: {
+        density: 'ta_density_v1',
+        modelWeights: 'ta_model_weights_v1',
+        smartFilter: 'ta_smart_filter_v1'
     },
     /**
      * Primary live path: Vercel `/api/quote` → PSE Edge OHLC (PHP),

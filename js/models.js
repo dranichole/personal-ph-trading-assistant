@@ -352,10 +352,85 @@ export function buildRiskPlan(bars, forecast, atrValue) {
     };
 }
 
+/** Default ensemble mix (trending markets lean momentum). */
+export const DEFAULT_MODEL_WEIGHTS = {
+    gbm: 20,
+    meanReversion: 30,
+    momentum: 50
+};
+
+function normalizeUserWeights(raw) {
+    const src = raw && typeof raw === 'object' ? raw : DEFAULT_MODEL_WEIGHTS;
+    const gbm = Math.max(0, Number(src.gbm) || 0);
+    const meanReversion = Math.max(0, Number(src.meanReversion) || 0);
+    const momentum = Math.max(0, Number(src.momentum) || 0);
+    const sum = gbm + meanReversion + momentum;
+    if (sum <= 0) return { ...DEFAULT_MODEL_WEIGHTS };
+    return {
+        gbm: (gbm / sum) * 100,
+        meanReversion: (meanReversion / sum) * 100,
+        momentum: (momentum / sum) * 100
+    };
+}
+
+/**
+ * Walk-forward hit rate: fraction of days where next close landed inside the
+ * model's ±1σ (or band) forecast from the prior window. Educational accuracy score.
+ */
+export function scoreModelHitRates(bars, { lookback = 30, sessions = 3 } = {}) {
+    const daily = (bars || []).filter((b) => Number(b?.close) > 0);
+    const ids = ['gbm', 'meanReversion', 'momentum'];
+    const hits = { gbm: 0, meanReversion: 0, momentum: 0 };
+    const trials = { gbm: 0, meanReversion: 0, momentum: 0 };
+    if (daily.length < lookback + sessions + 12) {
+        return {
+            ok: false,
+            note: 'Need ~60+ sessions for hit-rate scoring.',
+            scores: ids.map((id) => ({ id, pct: null, trials: 0 })),
+            overall: null
+        };
+    }
+
+    const start = Math.max(20, daily.length - lookback - sessions);
+    for (let i = start; i < daily.length - sessions; i++) {
+        const window = daily.slice(0, i + 1);
+        const closes = window.map((b) => Number(b.close));
+        const actual = Number(daily[i + sessions].close);
+        if (!(actual > 0)) continue;
+        const models = [
+            geometricBrownianMotionForecast(closes, sessions),
+            meanReversionForecast(closes, sessions, 20),
+            momentumForecast(closes, sessions, Math.min(20, Math.max(4, Math.floor(closes.length / 3))))
+        ];
+        models.forEach((m) => {
+            if (!m.ok) return;
+            trials[m.id] += 1;
+            const lo = Math.min(m.low, m.high);
+            const hi = Math.max(m.low, m.high);
+            if (actual >= lo && actual <= hi) hits[m.id] += 1;
+        });
+    }
+
+    const scores = ids.map((id) => ({
+        id,
+        name: id === 'gbm' ? 'GBM' : id === 'meanReversion' ? 'Mean rev' : 'Momentum',
+        pct: trials[id] ? parseFloat(((hits[id] / trials[id]) * 100).toFixed(1)) : null,
+        trials: trials[id],
+        hits: hits[id]
+    }));
+    const usable = scores.filter((s) => s.trials > 0);
+    const overall = usable.length
+        ? parseFloat((usable.reduce((a, s) => a + s.pct, 0) / usable.length).toFixed(1))
+        : null;
+    return { ok: overall != null, scores, overall, lookback, sessions };
+}
+
 /**
  * Short-horizon ensemble (1–5 sessions) on session-expanded bars.
+ * @param {object} [opts]
+ * @param {{ gbm?: number, meanReversion?: number, momentum?: number }} [opts.weights]
  */
-export function buildTradingPredictions(bars, sessions = 3) {
+export function buildTradingPredictions(bars, sessions = 3, opts = {}) {
     const daily = (bars || []).filter(b => Number(b?.close) > 0);
     const sessionBars = expandToSessionBars(daily);
     const series = sessionBars.length >= 24 ? sessionBars : daily;
@@ -367,6 +442,8 @@ export function buildTradingPredictions(bars, sessions = 3) {
     const momLookback = Math.min(20, Math.max(4, Math.floor(closes.length / 3)));
     const mom = momentumForecast(closes, T, momLookback);
     const volume = volumeAnalytics(series.length >= 10 ? series : daily, 20);
+    const userW = normalizeUserWeights(opts.weights);
+    const hitRates = scoreModelHitRates(daily, { lookback: 30, sessions: Math.min(T, 3) });
 
     const okModels = [gbm, mr, mom].filter(m => m.ok);
     if (!okModels.length) {
@@ -376,15 +453,18 @@ export function buildTradingPredictions(bars, sessions = 3) {
             models: [gbm, mr, mom],
             volume,
             sessions: T,
+            weights: userW,
+            hitRates,
             usedSessionProxy: series === sessionBars
         };
     }
 
-    // Soft-weight momentum down if volume is thin
+    // User sliders × volume confirmation (thin liquidity dampens momentum)
     const weights = okModels.map(m => {
-        if (m.id === 'momentum' && volume.ok && volume.thin) return 0.35;
-        if (m.id === 'momentum' && volume.ok && volume.backed) return 1.25;
-        return 1;
+        let w = (userW[m.id] ?? 33) / 100;
+        if (m.id === 'momentum' && volume.ok && volume.thin) w *= 0.35;
+        if (m.id === 'momentum' && volume.ok && volume.backed) w *= 1.25;
+        return Math.max(0.01, w);
     });
     const wSum = weights.reduce((a, b) => a + b, 0);
 
@@ -455,6 +535,8 @@ export function buildTradingPredictions(bars, sessions = 3) {
         volume,
         risk,
         ensemblePath,
+        weights: userW,
+        hitRates,
         usedSessionProxy: series !== daily && series === sessionBars,
         chart: {
             labels,
@@ -463,6 +545,48 @@ export function buildTradingPredictions(bars, sessions = 3) {
             bandLow: forecastLow,
             bandHigh: forecastHigh
         },
-        method: 'GBM + OU mean rev + ROC · VWAP/volume weight · 1–5 sessions'
+        method: 'GBM + OU mean rev + ROC · custom weights · VWAP/volume · 1–5 sessions'
     };
+}
+
+/**
+ * Expand daily OHLC into synthetic 4H / 1H bars for multi-timeframe chart study
+ * when a true intraday feed is unavailable.
+ */
+export function expandIntradayBars(bars, timeframe = '1D') {
+    const daily = (bars || []).filter((b) => Number(b?.close) > 0);
+    if (timeframe === '1D' || !daily.length) return daily;
+
+    const slots = timeframe === '1H' ? 8 : 2; // PSE ~8h / 4h blocks
+    const out = [];
+    daily.forEach((b) => {
+        const o = Number(b.open) || Number(b.close);
+        const h = Number(b.high) || o;
+        const l = Number(b.low) || o;
+        const c = Number(b.close);
+        const vol = (Number(b.volume) || 0) / slots;
+        const stamp = Number(b.timestamp) || 0;
+        for (let i = 0; i < slots; i++) {
+            const t = i / (slots - 1 || 1);
+            // Path open → high → low → close approximation across slots
+            let px;
+            if (i === 0) px = o;
+            else if (i === slots - 1) px = c;
+            else if (i < slots / 2) px = o + (h - o) * (i / (slots / 2));
+            else px = h - (h - l) * ((i - slots / 2) / (slots / 2));
+            const hi = Math.max(px, i === 0 ? o : out.length ? out[out.length - 1].close : o);
+            const lo = Math.min(px, i === 0 ? o : out.length ? out[out.length - 1].close : o);
+            out.push({
+                open: parseFloat((i === 0 ? o : out[out.length - 1].close).toFixed(4)),
+                high: parseFloat(Math.max(hi, px, h * 0.998 + px * 0.002).toFixed(4)),
+                low: parseFloat(Math.min(lo, px, l * 0.998 + px * 0.002).toFixed(4)),
+                close: parseFloat(px.toFixed(4)),
+                volume: vol,
+                date: `${b.date || ''}·${timeframe}${i + 1}`,
+                timestamp: stamp ? stamp + i * (timeframe === '1H' ? 3600 : 14400) : undefined,
+                syntheticTf: timeframe
+            });
+        }
+    });
+    return out;
 }

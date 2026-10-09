@@ -36,7 +36,15 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Feed path: optional WebSocket (`CONFIG.scalp.wsUrl`) → SSE `/api/ticks` → live phisix last-price poll (no free PSE tick WS)
 - Intraday metrics in memory: session **VWAP**, **EMA 9/21**, **HMA**, **ATR**, volume delta / order-flow tilt
 - Event triggers (not EOD GBM): VWAP reclaim/loss, volume spike, EMA cross, S/R break
-- Tick-recomputed trail / TP1 / TP2; **paper** buy/sell/stop from the chart panel; IBKR/Alpaca stubs until keys are set
+- Level-2 DOM (synthetic), time & sales tape, Buy Ask / Sell Bid / Flatten (`Shift+B` / `Shift+S` / `Esc`)
+- Paper fills auto-log to the journal with strategy tags
+
+### Watchlist density & math signals
+- Cards ↔ high-density **table**; smart filters: vol spike &gt;2×, RSI &lt;30/&gt;70, net flow proxy
+- BUY/SELL/HOLD + exclusive OPTIONAL BUY/SELL from GBM + OU + ROC ensemble votes + Wilder RSI
+- Position target via **¼-Kelly × ATR stop** (never shown as a red “loss” figure)
+- Predict: custom ensemble weight sliders + 30-day model band hit-rate scores
+- Chart: denser 60–90 candles, 1D/4H/1H toggles, catalyst flags, synced crosshairs + RSI pane, zoom/pan
 
 ### Beginner helpers
 - Clear “last close” wording (ending market price, not a sale price)

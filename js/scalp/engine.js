@@ -27,6 +27,40 @@ export class ScalpEngine {
         this._raf = null;
         this._dirty = false;
         this._lastTick = null;
+        this.tape = [];
+        this.dom = { bids: [], asks: [], spread: null };
+        this.onFill = null;
+    }
+
+    /** Synthetic Level-2 from last trade + recent tape imbalance. */
+    _rebuildDom(tick) {
+        const mid = Number(tick?.price);
+        if (!(mid > 0)) return;
+        const tapeBuy = this.tape.filter((t) => t.side === 'buy').slice(0, 12);
+        const tapeSell = this.tape.filter((t) => t.side === 'sell').slice(0, 12);
+        const buyBias = tapeBuy.reduce((s, t) => s + t.size, 0);
+        const sellBias = tapeSell.reduce((s, t) => s + t.size, 0);
+        const tickSize = mid >= 100 ? 0.5 : mid >= 50 ? 0.1 : 0.01;
+        const bids = [];
+        const asks = [];
+        for (let i = 1; i <= 8; i++) {
+            const base = 200 + i * 80;
+            bids.push({
+                price: parseFloat((mid - i * tickSize).toFixed(4)),
+                size: Math.round(base * (1 + buyBias / (buyBias + sellBias + 1)))
+            });
+            asks.push({
+                price: parseFloat((mid + i * tickSize).toFixed(4)),
+                size: Math.round(base * (1 + sellBias / (buyBias + sellBias + 1)))
+            });
+        }
+        this.dom = {
+            bids,
+            asks: asks.reverse(),
+            spread: parseFloat((asks[asks.length - 1].price - bids[0].price).toFixed(4)),
+            bestBid: bids[0].price,
+            bestAsk: asks[asks.length - 1].price
+        };
     }
 
     subscribe(fn) {
@@ -45,7 +79,9 @@ export class ScalpEngine {
             metrics: this.lastMetrics,
             signal: this.lastEvents,
             position: this.broker.getPosition(this.ticker),
-            orders: this.broker.listOrders(this.ticker)
+            orders: this.broker.listOrders(this.ticker),
+            tape: this.tape.slice(0, 40),
+            dom: this.dom
         };
         this.listeners.forEach((fn) => {
             try {
@@ -104,10 +140,22 @@ export class ScalpEngine {
             wsUrl,
             pollMs
         });
+        this.tape = [];
         this.unsub = this.stream.onTick((tick) => {
             this._lastTick = tick;
             this.feedMode = tick.source || this.stream.mode;
             this.aggregator.pushTick(tick);
+            const size = Number(tick.size) || 0;
+            this.tape.unshift({
+                t: tick.t || Date.now(),
+                price: tick.price,
+                size,
+                side: tick.side || 'unknown',
+                block: size >= 5000,
+                ms: tick.t || Date.now()
+            });
+            if (this.tape.length > 80) this.tape.length = 80;
+            this._rebuildDom(tick);
             this._schedulePublish();
         });
         await this.stream.start();
@@ -150,7 +198,7 @@ export class ScalpEngine {
         this.feedMode = 'idle';
     }
 
-    async buy(qty, price) {
+    async buy(qty, price, meta = {}) {
         const order = await this.broker.placeOrder({
             ticker: this.ticker,
             side: 'buy',
@@ -158,11 +206,12 @@ export class ScalpEngine {
             type: 'market',
             limitPrice: price
         });
+        this._emitFill(order, meta);
         this._publish();
         return order;
     }
 
-    async sell(qty, price) {
+    async sell(qty, price, meta = {}) {
         const order = await this.broker.placeOrder({
             ticker: this.ticker,
             side: 'sell',
@@ -170,8 +219,36 @@ export class ScalpEngine {
             type: 'market',
             limitPrice: price
         });
+        this._emitFill(order, meta);
         this._publish();
         return order;
+    }
+
+    async buyAsk(qty) {
+        const px = this.dom.bestAsk || this._lastTick?.price;
+        return this.buy(qty, px, { strategy: 'Buy Ask', tag: 'Momentum Breakout' });
+    }
+
+    async sellBid(qty) {
+        const px = this.dom.bestBid || this._lastTick?.price;
+        return this.sell(qty, px, { strategy: 'Sell Bid', tag: 'VWAP Reversion' });
+    }
+
+    async flatten() {
+        const pos = this.broker.getPosition(this.ticker);
+        if (!pos?.qty) return null;
+        const px = this.dom.bestBid || this._lastTick?.price;
+        return this.sell(pos.qty, px, { strategy: 'Flatten', tag: 'Flatten', flatten: true });
+    }
+
+    _emitFill(order, meta = {}) {
+        if (typeof this.onFill === 'function') {
+            try {
+                this.onFill({ order, meta, ticker: this.ticker, risk: this.lastEvents?.risk });
+            } catch (err) {
+                console.warn('scalp onFill', err);
+            }
+        }
     }
 
     async setStop(stopPrice) {

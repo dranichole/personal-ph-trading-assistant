@@ -661,3 +661,29 @@ header.sticky {
 .scalp-tf-btn {
     transition: background 0.15s ease, color 0.15s ease;
 }
+
+.position-target__amount,
+.position-target .position-target__amount {
+    color: var(--ink, #18181b) !important;
+}
+.watchlist-table th,
+.watchlist-table td {
+    white-space: nowrap;
+}
+.action-banner--inline {
+    display: inline-flex;
+    padding: 0.15rem 0.45rem;
+    font-size: 9px;
+    border-radius: 4px;
+}
+.scalp-dom {
+    max-height: 220px;
+    overflow-y: auto;
+}
+.scalp-tape {
+    scrollbar-width: thin;
+}
+#rsiChartCanvas {
+    width: 100% !important;
+    height: 112px !important;
+}

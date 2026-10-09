@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { buildTradingPredictions } from './models.js';
+import { buildTradingPredictions, DEFAULT_MODEL_WEIGHTS } from './models.js';
 
 /**
  * ==========================================
@@ -129,12 +129,29 @@ export function summarizeBars(bars) {
     }
 
     const atrValue = lastDefined(atrSeries);
+    const lastVol = volumes.length ? volumes[volumes.length - 1] : 0;
+    const volRatio = avgVolume > 0 ? lastVol / avgVolume : 0;
+
+    // Net flow proxy: up-day volume − down-day volume (PSE foreign flow when feed unavailable)
+    let upVol = 0;
+    let downVol = 0;
+    for (let i = 1; i < bars.length; i++) {
+        const v = Number(bars[i].volume) || 0;
+        if (Number(bars[i].close) >= Number(bars[i - 1].close)) upVol += v;
+        else downVol += v;
+    }
+    const netFlow = upVol - downVol;
+    const flowDenom = upVol + downVol || 1;
+    const netFlowPct = parseFloat((((upVol - downVol) / flowDenom) * 100).toFixed(1));
+
     const purchase = suggestPurchase(
         last,
         levels.support,
         levels.resistance,
         atrValue,
-        CONFIG.starterRiskPesos
+        CONFIG.starterRiskPesos,
+        null,
+        { bars }
     );
 
     return {
@@ -152,6 +169,13 @@ export function summarizeBars(bars) {
         support: levels.support,
         resistance: levels.resistance,
         avgVolume,
+        lastVolume: lastVol,
+        volRatio: parseFloat(volRatio.toFixed(2)),
+        volumeSpike: volRatio >= 2,
+        rsiExtreme: rsiValue != null && (rsiValue < 30 || rsiValue > 70),
+        netFlow,
+        netFlowPct,
+        foreignFlowPositive: netFlowPct > 5,
         smaBias,
         recentCloses: closes.slice(-20),
         purchase
@@ -170,9 +194,9 @@ const FORWARD_SESSIONS = 3;
 
 /**
  * Forward forecast strictly from js/models.js:
- * Geometric Brownian Motion + OU mean reversion + ROC momentum (equal-weight ensemble).
+ * Geometric Brownian Motion + OU mean reversion + ROC momentum (weighted ensemble).
  */
-export function computeQuantForecast(stats, bars = null) {
+export function computeQuantForecast(stats, bars = null, weights = null) {
     if (!stats || !Number.isFinite(stats.latestClose)) {
         return { ok: false, note: 'Need price data for the math model.' };
     }
@@ -189,7 +213,9 @@ export function computeQuantForecast(stats, bars = null) {
         ? bars
         : (stats.recentCloses || []).map(c => ({ close: c }));
 
-    const pred = buildTradingPredictions(series, FORWARD_SESSIONS);
+    const pred = buildTradingPredictions(series, FORWARD_SESSIONS, {
+        weights: weights || CONFIG.modelWeights || DEFAULT_MODEL_WEIGHTS
+    });
     if (!pred.ok) {
         return {
             ok: false,
@@ -326,11 +352,12 @@ function optionalHint(action, opts) {
 }
 
 /**
- * Educational BUY / SELL / HOLD from local indicators (RSI, SMAs, range trend, S/R).
- * Yellow OPTIONAL BUY or OPTIONAL SELL (never both) from the mathematical forward model.
+ * BUY / SELL / HOLD from ensemble vote (GBM + OU + ROC) + Wilder RSI 30/70 + SMAs.
+ * OPTIONAL BUY / OPTIONAL SELL (exclusive) from the same mathematical forward model.
+ * References: Wilder RSI thresholds; Kelly/ATR sizing elsewhere; ensemble majority vote.
  */
-export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
-    const forecast = computeQuantForecast(stats, bars);
+export function buildTradeSignal(stats, { preIpo = false, bars = null, weights = null } = {}) {
+    const forecast = computeQuantForecast(stats, bars, weights);
     const opt = detectOptionalCue(stats, forecast);
 
     if (!stats || !Number.isFinite(stats.latestClose)) {
@@ -356,50 +383,79 @@ export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
     let score = 0;
     const bits = [];
     const last = stats.latestClose;
+    let bullVotes = 0;
+    let bearVotes = 0;
 
+    // Model votes (published ensemble approach: require majority agreement)
+    if (forecast.ok && forecast.predictions?.models) {
+        forecast.predictions.models.forEach((m) => {
+            if (!m.ok) return;
+            if (m.expectedPct >= 0.5) {
+                bullVotes += 1;
+                score += 1;
+            } else if (m.expectedPct <= -0.5) {
+                bearVotes += 1;
+                score -= 1;
+            }
+        });
+        if (bullVotes || bearVotes) {
+            bits.push(`models ${bullVotes}↑/${bearVotes}↓ (GBM/OU/ROC)`);
+        }
+        if (forecast.expectedPct >= 2) {
+            score += 1;
+            bits.push(`ensemble ~+${forecast.expectedPct}% / ${FORWARD_SESSIONS}S`);
+        } else if (forecast.expectedPct <= -2) {
+            score -= 1;
+            bits.push(`ensemble ~${forecast.expectedPct}% / ${FORWARD_SESSIONS}S`);
+        }
+    }
+
+    // Wilder RSI(14): oversold <30, overbought >70
     if (stats.rsi != null) {
         if (stats.rsi <= 30) {
             score += 2;
-            bits.push(`RSI is ${stats.rsi} (oversold), so recent selling may be stretched`);
+            bullVotes += 1;
+            bits.push(`RSI ${stats.rsi} oversold (Wilder <30)`);
         } else if (stats.rsi >= 70) {
             score -= 2;
-            bits.push(`RSI is ${stats.rsi} (overbought), so the recent rise may be stretched`);
+            bearVotes += 1;
+            bits.push(`RSI ${stats.rsi} overbought (Wilder >70)`);
         } else if (stats.rsi <= 40) {
             score += 1;
-            bits.push(`RSI is ${stats.rsi}, on the softer side`);
+            bits.push(`RSI ${stats.rsi}, soft`);
         } else if (stats.rsi >= 60) {
             score -= 1;
-            bits.push(`RSI is ${stats.rsi}, on the hotter side`);
+            bits.push(`RSI ${stats.rsi}, hot`);
         }
     }
 
     if (stats.sma20 != null) {
         if (last >= stats.sma20) {
             score += 1;
-            bits.push('price sits above the 20-day average (short-term strength)');
+            bits.push('above SMA20');
         } else {
             score -= 1;
-            bits.push('price sits below the 20-day average (short-term weakness)');
+            bits.push('below SMA20');
         }
     }
 
     if (stats.sma50 != null) {
         if (last >= stats.sma50) {
             score += 1;
-            bits.push('price also holds above the 50-day average');
+            bits.push('above SMA50');
         } else {
             score -= 1;
-            bits.push('price also sits below the 50-day average');
+            bits.push('below SMA50');
         }
     }
 
     if (Number.isFinite(stats.pctChange)) {
         if (stats.pctChange >= 3) {
             score += 1;
-            bits.push(`this range is up ${stats.pctChange.toFixed(1)}%`);
+            bits.push(`range +${stats.pctChange.toFixed(1)}%`);
         } else if (stats.pctChange <= -3) {
             score -= 1;
-            bits.push(`this range is down ${Math.abs(stats.pctChange).toFixed(1)}%`);
+            bits.push(`range ${stats.pctChange.toFixed(1)}%`);
         }
     }
 
@@ -412,42 +468,38 @@ export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
         const pos = (last - stats.support) / span;
         if (pos <= 0.25) {
             score += 1;
-            bits.push(`price is near recent support around ₱${stats.support.toFixed(2)}`);
+            bits.push(`near support ₱${stats.support.toFixed(2)}`);
         } else if (pos >= 0.75) {
             score -= 1;
-            bits.push(`price is near recent resistance around ₱${stats.resistance.toFixed(2)}`);
+            bits.push(`near resistance ₱${stats.resistance.toFixed(2)}`);
         }
     }
 
-    if (forecast.ok) {
-        if (forecast.expectedPct >= 2) {
-            score += 1;
-            bits.push(`ensemble ~+${forecast.expectedPct}% / ${FORWARD_SESSIONS}S`);
-        } else if (forecast.expectedPct <= -2) {
-            score -= 1;
-            bits.push(`ensemble ~${forecast.expectedPct}% / ${FORWARD_SESSIONS}S`);
-        }
-    }
-
+    // Majority gate: need score magnitude AND at least 2 bull/bear votes for BUY/SELL
     let action = 'HOLD';
-    if (score >= 2) action = 'BUY';
-    else if (score <= -2) action = 'SELL';
+    if (score >= 2 && bullVotes >= 2) action = 'BUY';
+    else if (score <= -2 && bearVotes >= 2) action = 'SELL';
+    else if (score >= 3) action = 'BUY';
+    else if (score <= -3) action = 'SELL';
 
     const why = bits.length
-        ? bits.slice(0, 3).join('; ') + '.'
+        ? bits.slice(0, 4).join('; ') + '.'
         : 'Mixed signals. Wait.';
     const hint = optionalHint(action, opt);
     const modelLine = forecast.ok
-        ? ` Ensemble ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% / ${FORWARD_SESSIONS}S vs ₱${forecast.entryRef.toFixed(2)}.`
+        ? ` Ensemble ${forecast.expectedPct >= 0 ? '+' : ''}${forecast.expectedPct}% / ${FORWARD_SESSIONS}S.`
         : '';
 
     if (action === 'BUY') {
         return withOptionalFlags({
             action: 'BUY',
             tone: 'buy',
-            cardHint: hint || 'Levels lean supportive',
-            meaning: 'Study an entry with small size and an ATR trail. Practice only.',
-            reason: `BUY: ${why}${modelLine}`
+            cardHint: hint || 'Ensemble leans long',
+            meaning: 'Study an entry with Kelly/ATR size and an ATR trail. Practice only.',
+            reason: `BUY: ${why}${modelLine}`,
+            score,
+            bullVotes,
+            bearVotes
         }, opt);
     }
 
@@ -455,9 +507,12 @@ export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
         return withOptionalFlags({
             action: 'SELL',
             tone: 'sell',
-            cardHint: hint || 'Levels look stretched',
+            cardHint: hint || 'Ensemble leans short',
             meaning: 'Study tightening risk or stepping aside. Not a broker order.',
-            reason: `SELL: ${why}${modelLine}`
+            reason: `SELL: ${why}${modelLine}`,
+            score,
+            bullVotes,
+            bearVotes
         }, opt);
     }
 
@@ -466,7 +521,10 @@ export function buildTradeSignal(stats, { preIpo = false, bars = null } = {}) {
         tone: 'hold',
         cardHint: hint || 'No clear edge',
         meaning: 'Wait for a cleaner signal.',
-        reason: `HOLD: ${why}${modelLine}`
+        reason: `HOLD: ${why}${modelLine}`,
+        score,
+        bullVotes,
+        bearVotes
     }, opt);
 }
 
@@ -639,8 +697,24 @@ export function forecastInvestment(investPesos, pctChange, latestClose) {
 }
 
 /**
- * Starter size with ATR trailing stop (1.5×ATR below entry/last).
- * Optional take-profit ladder from a forecast band when provided.
+ * Fractional Kelly: f* = p − q/b, then × ¼ (Thorp / practical trading guidance).
+ * Never use full Kelly on noisy estimates.
+ */
+export function fractionalKelly(winRate, avgWin, avgLoss, fraction = 0.25) {
+    const p = Number(winRate);
+    const aw = Number(avgWin);
+    const al = Number(avgLoss);
+    if (!(p > 0 && p < 1) || !(aw > 0) || !(al > 0)) return 0;
+    const b = aw / al;
+    const q = 1 - p;
+    const full = (p * b - q) / b;
+    return Math.max(0, Math.min(0.25, full * fraction));
+}
+
+/**
+ * Starter size from ensemble math + ATR stop + ¼-Kelly capital fraction.
+ * Position Target = shares × entry (always shown as positive capital allocation).
+ * Refs: ATR risk = equity×risk% / (k×ATR); Kelly f*=p−q/b at ¼ fraction.
  */
 export function suggestPurchase(
     latestClose,
@@ -648,7 +722,8 @@ export function suggestPurchase(
     resistance,
     atrValue,
     riskPesos = 1000,
-    forecastBand = null
+    forecastBand = null,
+    opts = {}
 ) {
     if (!latestClose || latestClose <= 0) {
         return { entry: null, shares: null, spend: null, stop: null, note: 'Need price data first.' };
@@ -666,13 +741,47 @@ export function suggestPurchase(
     const trailMult = 1.5;
     const trailStop = parseFloat(Math.max(0.01, Math.min(entry, latestClose) - atr * trailMult).toFixed(2));
     const riskPerShare = Math.max(entry - trailStop, entry * 0.01);
-    const shares = Math.max(1, Math.floor(riskPesos / riskPerShare));
+
+    // Ensemble edge → Kelly inputs
+    const bars = opts.bars || null;
+    const weights = opts.weights || CONFIG.modelWeights || DEFAULT_MODEL_WEIGHTS;
+    const pred = bars?.length
+        ? buildTradingPredictions(bars, FORWARD_SESSIONS, { weights })
+        : (forecastBand && Number.isFinite(forecastBand.expectedPct)
+            ? { ok: true, expectedPct: forecastBand.expectedPct, hitRates: null, high: forecastBand.high, low: forecastBand.low }
+            : null);
+
+    let winRate = 0.52;
+    let avgWin = atr * 1.2;
+    let avgLoss = riskPerShare;
+    if (pred?.ok) {
+        const hit = pred.hitRates?.overall;
+        if (Number.isFinite(hit)) winRate = Math.min(0.72, Math.max(0.35, hit / 100));
+        const upside = Number.isFinite(pred.high)
+            ? Math.max(atr * 0.5, pred.high - entry)
+            : Math.max(atr, entry * Math.abs(pred.expectedPct || 1) / 100);
+        avgWin = upside;
+        avgLoss = riskPerShare;
+    }
+
+    const kellyF = fractionalKelly(winRate, avgWin, avgLoss, 0.25);
+    const capital = Math.max(riskPesos * 20, riskPesos); // implied practice book (~5% risk unit)
+    const kellyRiskBudget = Math.max(riskPesos * 0.5, capital * kellyF);
+    const atrShares = Math.max(1, Math.floor(Math.max(riskPesos, kellyRiskBudget) / riskPerShare));
+    const kellyShares = kellyF > 0
+        ? Math.max(1, Math.floor((capital * kellyF) / entry))
+        : atrShares;
+    // Blend ATR risk shares with Kelly notional; cap so spend stays sensible
+    let shares = Math.max(1, Math.round((atrShares * 0.6 + kellyShares * 0.4)));
+    const maxSpend = capital * 0.25;
+    if (shares * entry > maxSpend) shares = Math.max(1, Math.floor(maxSpend / entry));
     const spend = parseFloat((shares * entry).toFixed(2));
 
     let takeProfits = null;
-    if (forecastBand && Number.isFinite(forecastBand.low) && Number.isFinite(forecastBand.high)) {
-        const lo = Math.min(forecastBand.low, forecastBand.high);
-        const hi = Math.max(forecastBand.low, forecastBand.high);
+    const band = forecastBand || (pred?.ok ? { low: pred.low, high: pred.high } : null);
+    if (band && Number.isFinite(band.low) && Number.isFinite(band.high)) {
+        const lo = Math.min(band.low, band.high);
+        const hi = Math.max(band.low, band.high);
         const span = Math.max(hi - lo, entry * 0.005);
         takeProfits = [
             parseFloat((entry + span * 0.35).toFixed(2)),
@@ -691,6 +800,9 @@ export function suggestPurchase(
         atr: parseFloat(atr.toFixed(4)),
         takeProfits,
         riskPesos,
-        note: `ATR trail ${trailMult}× · risk ~₱${riskPesos.toLocaleString('en-PH')}`
+        kellyFraction: parseFloat((kellyF * 100).toFixed(2)),
+        winRate: parseFloat((winRate * 100).toFixed(1)),
+        method: '¼-Kelly × ATR stop',
+        note: `¼-Kelly ${ (kellyF * 100).toFixed(1) }% · ATR trail ${trailMult}× · win~${(winRate * 100).toFixed(0)}%`
     };
 }

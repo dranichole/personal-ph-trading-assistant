@@ -9,9 +9,10 @@ import {
     buildTradeSignal,
     projectHorizonInvestment,
     suggestPurchase,
-    FORECAST_HORIZONS
+    FORECAST_HORIZONS,
+    rsi as computeRsiSeries
 } from './indicators.js';
-import { buildTradingPredictions } from './models.js';
+import { buildTradingPredictions, expandIntradayBars } from './models.js';
 import { upcomingCatalysts, fetchHeadlines } from './catalysts.js';
 import { SCALP_TIMEFRAMES } from './scalp/engine.js';
 
@@ -73,9 +74,29 @@ export class UIController {
             scalpQtyInput: document.getElementById('scalpQtyInput'),
             scalpBuyBtn: document.getElementById('scalpBuyBtn'),
             scalpSellBtn: document.getElementById('scalpSellBtn'),
+            scalpBuyAskBtn: document.getElementById('scalpBuyAskBtn'),
+            scalpSellBidBtn: document.getElementById('scalpSellBidBtn'),
+            scalpFlattenBtn: document.getElementById('scalpFlattenBtn'),
             scalpTrailBtn: document.getElementById('scalpTrailBtn'),
             scalpPosition: document.getElementById('scalpPosition'),
             scalpOrderList: document.getElementById('scalpOrderList'),
+            scalpTape: document.getElementById('scalpTape'),
+            scalpDom: document.getElementById('scalpDom'),
+            densityToggle: document.getElementById('densityToggle'),
+            smartFilterBar: document.getElementById('smartFilterBar'),
+            dashboardTableWrap: document.getElementById('dashboardTableWrap'),
+            dashboardTableBody: document.getElementById('dashboardTableBody'),
+            chartTfButtons: document.getElementById('chartTfButtons'),
+            weightMomentum: document.getElementById('weightMomentum'),
+            weightMeanRev: document.getElementById('weightMeanRev'),
+            weightGbm: document.getElementById('weightGbm'),
+            wMomLabel: document.getElementById('wMomLabel'),
+            wMrLabel: document.getElementById('wMrLabel'),
+            wGbmLabel: document.getElementById('wGbmLabel'),
+            modelHitRateRow: document.getElementById('modelHitRateRow'),
+            journalAnalytics: document.getElementById('journalAnalytics'),
+            journalStrategyBreak: document.getElementById('journalStrategyBreak'),
+            journalStrategyList: document.getElementById('journalStrategyList'),
             dashboardSections: document.getElementById('dashboardSections'),
             emptyWatchlist: document.getElementById('emptyWatchlist'),
             watchlistMessage: document.getElementById('watchlistMessage'),
@@ -243,7 +264,74 @@ export class UIController {
                 if (this.els.scalpBrokerStatus) this.els.scalpBrokerStatus.textContent = err.message;
             }
         });
+        this.els.scalpBuyAskBtn?.addEventListener('click', async () => {
+            try {
+                const qty = Number(this.els.scalpQtyInput?.value) || 100;
+                await this._scalpEngine?.buyAsk(qty);
+            } catch (err) {
+                if (this.els.scalpBrokerStatus) this.els.scalpBrokerStatus.textContent = err.message;
+            }
+        });
+        this.els.scalpSellBidBtn?.addEventListener('click', async () => {
+            try {
+                const qty = Number(this.els.scalpQtyInput?.value) || 100;
+                await this._scalpEngine?.sellBid(qty);
+            } catch (err) {
+                if (this.els.scalpBrokerStatus) this.els.scalpBrokerStatus.textContent = err.message;
+            }
+        });
+        this.els.scalpFlattenBtn?.addEventListener('click', async () => {
+            try {
+                await this._scalpEngine?.flatten();
+            } catch (err) {
+                if (this.els.scalpBrokerStatus) this.els.scalpBrokerStatus.textContent = err.message;
+            }
+        });
+        document.addEventListener('keydown', (e) => {
+            if (this.app.state.currentView !== 'scalp') return;
+            const tag = (e.target?.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            if (e.shiftKey && (e.key === 'B' || e.key === 'b')) {
+                e.preventDefault();
+                this.els.scalpBuyAskBtn?.click();
+            } else if (e.shiftKey && (e.key === 'S' || e.key === 's')) {
+                e.preventDefault();
+                this.els.scalpSellBidBtn?.click();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.els.scalpFlattenBtn?.click();
+            }
+        });
+        this.els.densityToggle?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-density]');
+            if (!btn) return;
+            this.app.state.setDensityMode(btn.dataset.density);
+            this.renderDashboard();
+        });
+        this.els.smartFilterBar?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-smart-filter]');
+            if (!btn) return;
+            this.app.state.setSmartFilter(btn.dataset.smartFilter);
+            this.renderDashboard();
+        });
+        this.els.chartTfButtons?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-chart-tf]');
+            if (!btn || !this.app.state.activeStock) return;
+            this.app.state.chartTimeframe = btn.dataset.chartTf;
+            const snap = this.app.state.getSnapshot(
+                this.app.state.activeStock.ticker,
+                this.app.state.activeRange
+            );
+            if (snap) this.drawDetailCharts(snap);
+        });
+        const onWeight = () => this.applyWeightSliders();
+        this.els.weightMomentum?.addEventListener('input', onWeight);
+        this.els.weightMeanRev?.addEventListener('input', onWeight);
+        this.els.weightGbm?.addEventListener('input', onWeight);
         this.buildScalpTfButtons();
+        this.syncWeightSliders();
+        this.syncDensityToggle();
+        this.syncSmartFilterBar();
         this.els.themeToggle?.addEventListener('click', () => {
             const next = this.app.state.theme === 'night' ? 'day' : 'night';
             this.app.setTheme(next);
@@ -680,14 +768,17 @@ export class UIController {
 
     formatPurchaseLine(purchase) {
         if (!purchase?.entry || !purchase?.spend) return { amount: '—', meta: 'Need more price history.' };
+        const spend = Math.abs(Number(purchase.spend));
+        const tps = Array.isArray(purchase.takeProfits) && purchase.takeProfits.length
+            ? ` · TP ${purchase.takeProfits.map((p) => `₱${Number(p).toFixed(2)}`).join('/')}`
+            : '';
+        const kelly = Number.isFinite(purchase.kellyFraction)
+            ? ` · ¼-Kelly ${purchase.kellyFraction}%`
+            : '';
         return {
-            amount: `~₱${purchase.spend.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-            meta: (() => {
-                const tps = Array.isArray(purchase.takeProfits) && purchase.takeProfits.length
-                    ? ` · TP ${purchase.takeProfits.map(p => `₱${Number(p).toFixed(2)}`).join('/')}`
-                    : '';
-                return `${purchase.shares} sh @ ₱${purchase.entry.toFixed(2)} · trail ₱${purchase.stop.toFixed(2)}${tps}`;
-            })()
+            amount: `Position Target: ₱${spend.toLocaleString('en-PH', { maximumFractionDigits: 0 })} · ${purchase.shares} sh @ ₱${purchase.entry.toFixed(2)}`,
+            meta: `Trail ₱${purchase.stop.toFixed(2)}${tps}${kelly}`,
+            positive: true
         };
     }
 
@@ -786,6 +877,40 @@ export class UIController {
         });
     }
 
+    passesSmartFilter(stock, stats) {
+        const f = this.app.state.smartFilter || 'all';
+        if (f === 'all') return true;
+        if (stock.preIpo || !stats) return false;
+        if (f === 'volSpike') return Boolean(stats.volumeSpike);
+        if (f === 'rsiExtreme') return Boolean(stats.rsiExtreme);
+        if (f === 'foreignFlow') return Boolean(stats.foreignFlowPositive);
+        return true;
+    }
+
+    syncDensityToggle() {
+        const mode = this.app.state.densityMode || 'cards';
+        this.els.densityToggle?.querySelectorAll('[data-density]').forEach((btn) => {
+            const on = btn.dataset.density === mode;
+            btn.className = `density-btn px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded ${
+                on ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'
+            }`;
+        });
+        this.els.dashboardTableWrap?.classList.toggle('hidden', mode !== 'table');
+        this.els.dashboardSections?.classList.toggle('hidden', mode === 'table');
+    }
+
+    syncSmartFilterBar() {
+        const active = this.app.state.smartFilter || 'all';
+        this.els.smartFilterBar?.querySelectorAll('[data-smart-filter]').forEach((btn) => {
+            const on = btn.dataset.smartFilter === active;
+            btn.classList.toggle('bg-zinc-900', on);
+            btn.classList.toggle('text-white', on);
+            btn.classList.toggle('border-zinc-900', on);
+            btn.classList.toggle('bg-white', !on);
+            btn.classList.toggle('text-zinc-600', !on);
+        });
+    }
+
     renderDashboard() {
         const host = this.els.dashboardSections;
         if (!host) {
@@ -793,18 +918,39 @@ export class UIController {
             return;
         }
 
+        this.syncDensityToggle();
+        this.syncSmartFilterBar();
+
         const sections = this.dashboardSectionsFromWatchlist();
-        const total = sections.reduce((n, s) => n + (s.stocks?.length || 0), 0);
+        const flat = [];
+        sections.forEach((s) => (s.stocks || []).forEach((stock) => flat.push(stock)));
+
+        const filteredFlat = flat.filter((stock) => {
+            const snap = this.app.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
+            const stats = snap?.bars?.length ? summarizeBars(snap.bars) : null;
+            stock._rsi = stats?.rsi;
+            return this.passesSmartFilter(stock, stats);
+        });
+
+        const total = filteredFlat.length;
         if (this.els.emptyWatchlist) {
             this.els.emptyWatchlist.classList.toggle('hidden', total > 0);
+        }
+
+        if ((this.app.state.densityMode || 'cards') === 'table') {
+            this.renderDashboardTable(filteredFlat);
+            host.replaceChildren();
+            return;
         }
 
         // Build off-DOM so a card error cannot leave a wiped page.
         const frag = document.createDocumentFragment();
         const chartJobs = [];
+        const allowed = new Set(filteredFlat.map((s) => s.ticker));
 
         sections.forEach(section => {
-            if (!section.stocks?.length) return;
+            const stocks = (section.stocks || []).filter((s) => allowed.has(s.ticker));
+            if (!stocks.length) return;
 
             const block = document.createElement('section');
             block.className = `watchlist-section watchlist-section--${section.id}`;
@@ -825,7 +971,7 @@ export class UIController {
             const grid = document.createElement('div');
             grid.className = 'watchlist-section__grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
 
-            section.stocks.forEach(stock => {
+            stocks.forEach(stock => {
                 try {
                     const { card, snap } = this.buildStockCard(stock);
                     grid.appendChild(card);
@@ -846,6 +992,53 @@ export class UIController {
         chartJobs.forEach(job => this.drawMiniChart(job.id, job.bars));
     }
 
+    renderDashboardTable(stocks) {
+        const body = this.els.dashboardTableBody;
+        if (!body) return;
+        body.innerHTML = '';
+        stocks.forEach((stock) => {
+            const snap = this.app.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
+            const bars = snap?.bars || [];
+            const stats = bars.length ? summarizeBars(bars) : null;
+            const signal = buildTradeSignal(stats, {
+                preIpo: stock.preIpo,
+                bars,
+                weights: this.app.state.modelWeights
+            });
+            const purchase = stats
+                ? this.formatPurchaseLine(
+                      suggestPurchase(
+                          stats.latestClose,
+                          stats.support,
+                          stats.resistance,
+                          stats.atr,
+                          CONFIG.starterRiskPesos,
+                          null,
+                          { bars, weights: this.app.state.modelWeights }
+                      )
+                  )
+                : null;
+            const last = stats?.latestClose;
+            const vol = bars.length ? bars[bars.length - 1].volume : null;
+            const tr = document.createElement('tr');
+            tr.className = 'border-b border-zinc-50 hover:bg-zinc-50 cursor-pointer';
+            tr.onclick = () => this.app.openDetails(stock.ticker);
+            const chg = stats?.pctChange;
+            tr.innerHTML = `
+                <td class="px-3 py-2 font-bold text-zinc-900">${escapeHtml(stock.ticker)}</td>
+                <td class="px-3 py-2">${last != null ? `₱${last.toFixed(2)}` : '—'}</td>
+                <td class="px-3 py-2 font-semibold ${chg >= 0 ? 'text-emerald-600' : 'text-red-600'}">${
+                    chg != null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` : '—'
+                }</td>
+                <td class="px-3 py-2">${vol != null ? formatVolume(vol) : '—'}</td>
+                <td class="px-3 py-2">${stats?.rsi != null ? stats.rsi.toFixed(1) : '—'}</td>
+                <td class="px-3 py-2"><span class="action-banner action-banner--${escapeHtml(signal.tone)} action-banner--inline">${escapeHtml(signal.action)}</span></td>
+                <td class="px-3 py-2 text-zinc-700 position-target__amount">${purchase ? escapeHtml(purchase.amount) : '—'}</td>
+            `;
+            body.appendChild(tr);
+        });
+    }
+
     buildStockCard(stock) {
         const snap = this.app.state.getSnapshot(stock.ticker, CONFIG.dashboardRange);
         const bars = Array.isArray(snap?.bars) ? snap.bars : [];
@@ -862,9 +1055,25 @@ export class UIController {
         const stats = bars.length ? summarizeBars(bars) : null;
         const isUp = stats ? stats.pctChange >= 0 : true;
         const source = snap?.source;
-        const purchase = stats ? this.formatPurchaseLine(stats.purchase) : null;
+        const purchase = stats
+            ? this.formatPurchaseLine(
+                  suggestPurchase(
+                      stats.latestClose,
+                      stats.support,
+                      stats.resistance,
+                      stats.atr,
+                      CONFIG.starterRiskPesos,
+                      null,
+                      { bars, weights: this.app.state.modelWeights }
+                  )
+              )
+            : null;
         const ipoPrice = filing?.finalOfferPrice != null ? Number(filing.finalOfferPrice) : null;
-        const signal = buildTradeSignal(stats, { preIpo: isPreIpo, bars });
+        const signal = buildTradeSignal(stats, {
+            preIpo: isPreIpo,
+            bars,
+            weights: this.app.state.modelWeights
+        });
 
             card.innerHTML = `
             <div class="action-banner action-banner--${escapeHtml(signal.tone)}" role="status">
@@ -943,11 +1152,11 @@ export class UIController {
                 <p>NI 2025: ₱${filing.netIncome2025B ?? '—'}B · Q1 2026: ₱${filing.netIncomeQ12026B ?? '—'}B</p>
             </div>` : ''}
             ${purchase && !isPreIpo ? `
-            <div class="mb-3 has-tip bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2">
-                <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Starter buy idea</p>
-                <p class="text-sm font-semibold text-zinc-900 mt-0.5">${escapeHtml(purchase.amount || '—')}</p>
+            <div class="mb-3 has-tip bg-zinc-50 border border-zinc-100 rounded-lg px-3 py-2 position-target">
+                <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold">Position target</p>
+                <p class="text-sm font-semibold text-zinc-900 mt-0.5 position-target__amount">${escapeHtml(purchase.amount || '—')}</p>
                 <p class="text-[10px] text-zinc-500 mt-0.5">${escapeHtml(purchase.meta || '')}</p>
-                <span class="tip-bubble">Practice size near support with ATR trailing stop. Not advice.</span>
+                <span class="tip-bubble">¼-Kelly × ATR trail from ensemble math. Capital to allocate — not a loss. Study only.</span>
             </div>` : ''}
             <div class="h-28 mb-4 w-full relative">
                  <canvas id="dash-chart-${escapeHtml(stock.ticker)}"></canvas>
@@ -1034,17 +1243,88 @@ export class UIController {
         this.app.state.registerChart(canvasId, chart);
     }
 
+    chartBarsForDisplay(snapshot) {
+        const tf = this.app.state.chartTimeframe || '1D';
+        let bars = snapshot?.bars || [];
+        if (tf !== '1D') bars = expandIntradayBars(bars, tf);
+        if (bars.length > 90) bars = bars.slice(-90);
+        return bars;
+    }
+
+    catalystAnnotationPlugin(catalysts, labels, bars) {
+        return {
+            id: 'catalystFlags',
+            afterDraw: (chart) => {
+                if (!catalysts?.length || !chart.chartArea) return;
+                const { ctx, chartArea, scales } = chart;
+                const xScale = scales.x;
+                catalysts.forEach((ev) => {
+                    const day = String(ev.date || '').slice(5); // MM-DD
+                    let idx = labels.findIndex((lb) => String(lb).includes(day) || String(lb).startsWith(ev.date));
+                    if (idx < 0 && bars?.length) {
+                        // Future catalysts sit near the right edge of the visible window
+                        if (ev.inDays > 20) idx = Math.min(bars.length - 1, Math.floor(bars.length * 0.97));
+                        else if (ev.inDays > 0) idx = Math.min(bars.length - 1, Math.floor(bars.length * 0.92));
+                        else idx = bars.length - 1;
+                    }
+                    if (idx < 0) return;
+                    const x = xScale.getPixelForValue(idx);
+                    if (x < chartArea.left || x > chartArea.right) return;
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(217, 119, 6, 0.7)';
+                    ctx.setLineDash([4, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(x, chartArea.top);
+                    ctx.lineTo(x, chartArea.bottom);
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(217, 119, 6, 0.9)';
+                    ctx.font = '9px DM Sans, sans-serif';
+                    ctx.fillText(String(ev.title || 'Event').slice(0, 18), x + 3, chartArea.top + 10);
+                    ctx.restore();
+                });
+            }
+        };
+    }
+
+    syncChartCrosshair(sourceChart, index) {
+        ['largeChartCanvas', 'volumeChartCanvas', 'rsiChartCanvas'].forEach((id) => {
+            const ch = this.app.state.chartInstances[id];
+            if (!ch || ch === sourceChart) return;
+            const meta = ch.getDatasetMeta(0);
+            if (!meta?.data?.[index]) return;
+            ch.setActiveElements([{ datasetIndex: 0, index }]);
+            ch.tooltip.setActiveElements([{ datasetIndex: 0, index }], { x: 0, y: 0 });
+            ch.update('none');
+        });
+    }
+
     drawDetailCharts(snapshot) {
         if (typeof Chart === 'undefined') return;
+        const zoomPlugin =
+            (typeof window !== 'undefined' &&
+                (window.ChartZoom || window['chartjs-plugin-zoom'])) ||
+            null;
+        if (zoomPlugin && !this._zoomRegistered) {
+            try {
+                Chart.register(zoomPlugin);
+                this._zoomRegistered = true;
+            } catch {
+                /* already registered */
+            }
+        }
+
         const priceCanvas = this.resetChartCanvas('largeChartCanvas');
         const volumeCanvas = this.resetChartCanvas('volumeChartCanvas');
+        const rsiCanvas = this.resetChartCanvas('rsiChartCanvas');
         if (!priceCanvas || !volumeCanvas) return;
 
-        const bars = snapshot.bars;
+        const bars = this.chartBarsForDisplay(snapshot);
         const stats = summarizeBars(bars);
         const labels = bars.map(d => d.date);
         const useCombo = this.app.state.chartStyle !== 'line';
         const colors = this.chartColors();
+        const ticker = this.app.state.activeStock?.ticker;
+        const catalysts = ticker ? upcomingCatalysts(ticker, 4) : [];
 
         const trendFill = (context) => {
             const { chart } = context;
@@ -1083,7 +1363,7 @@ export class UIController {
         let datasets;
         if (useCombo) {
             const candleDatasets = this.candleDatasets(bars, colors);
-            const bodyThickness = bars.length > 120 ? 3 : bars.length > 50 ? 5 : 8;
+            const bodyThickness = bars.length > 120 ? 2 : bars.length > 60 ? 4 : bars.length > 40 ? 5 : 8;
             candleDatasets[1].barThickness = bodyThickness;
             candleDatasets[0].barThickness = Math.max(1, Math.round(bodyThickness / 6));
             datasets = [...candleDatasets, ...smaDatasets];
@@ -1124,9 +1404,21 @@ export class UIController {
             ];
         }
 
+        const zoomOpts = {
+            pan: { enabled: true, mode: 'x', modifierKey: null },
+            zoom: {
+                wheel: { enabled: true },
+                pinch: { enabled: true },
+                mode: 'x'
+            },
+            limits: { x: { minRange: 8 } }
+        };
+
+        const self = this;
         const priceChart = new Chart(priceCanvas.getContext('2d'), {
             type: useCombo ? 'bar' : 'line',
             data: { labels, datasets },
+            plugins: [this.catalystAnnotationPlugin(catalysts, labels, bars)],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -1141,6 +1433,7 @@ export class UIController {
                             filter: (item) => ['Trend line', 'SMA50', 'Close'].includes(item.text)
                         }
                     },
+                    zoom: zoomOpts,
                     tooltip: {
                         mode: 'index',
                         intersect: false,
@@ -1167,8 +1460,10 @@ export class UIController {
                                 const i = items[0]?.dataIndex;
                                 const b = bars[i];
                                 if (!b) return [];
+                                const rsiVal = computeRsiSeries(bars.map((x) => x.close), 14)[i];
                                 return [
-                                    `O ₱${b.open.toFixed(2)}  H ₱${b.high.toFixed(2)}  L ₱${b.low.toFixed(2)}  C ₱${b.close.toFixed(2)}  V ${formatVolume(b.volume)}`
+                                    `O ₱${b.open.toFixed(2)}  H ₱${b.high.toFixed(2)}  L ₱${b.low.toFixed(2)}  C ₱${b.close.toFixed(2)}`,
+                                    `Vol ${formatVolume(b.volume)}${rsiVal != null ? ` · RSI ${rsiVal.toFixed(1)}` : ''}`
                                 ];
                             }
                         }
@@ -1179,7 +1474,7 @@ export class UIController {
                         display: true,
                         grid: { display: false },
                         stacked: false,
-                        ticks: { color: colors.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 }
+                        ticks: { color: colors.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 10 }
                     },
                     y: {
                         display: true,
@@ -1189,7 +1484,11 @@ export class UIController {
                         ticks: { color: colors.muted }
                     }
                 },
-                interaction: { mode: 'nearest', axis: 'x', intersect: false }
+                interaction: { mode: 'index', axis: 'x', intersect: false },
+                onHover: (evt, els, chart) => {
+                    const i = els[0]?.index ?? chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, false)[0]?.index;
+                    if (i != null) self.syncChartCrosshair(chart, i);
+                }
             }
         });
         this.app.state.registerChart('largeChartCanvas', priceChart);
@@ -1199,6 +1498,7 @@ export class UIController {
             data: {
                 labels,
                 datasets: [{
+                    label: 'Volume',
                     data: bars.map(b => b.volume),
                     backgroundColor: bars.map(b => b.close >= b.open
                         ? `${colors.up}73`
@@ -1210,13 +1510,14 @@ export class UIController {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: { display: false },
+                    zoom: zoomOpts,
                     tooltip: {
                         backgroundColor: colors.tipBg,
                         displayColors: false,
                         callbacks: {
                             label: (ctx) => {
                                 const b = bars[ctx.dataIndex];
-                                return `Volume ${formatVolume(b?.volume)}. How many shares changed hands that day.`;
+                                return `Volume ${formatVolume(b?.volume)}`;
                             }
                         }
                     }
@@ -1224,10 +1525,96 @@ export class UIController {
                 scales: {
                     x: { display: false },
                     y: { display: false }
+                },
+                interaction: { mode: 'index', axis: 'x', intersect: false },
+                onHover: (evt, els, chart) => {
+                    const i = els[0]?.index;
+                    if (i != null) self.syncChartCrosshair(chart, i);
                 }
             }
         });
         this.app.state.registerChart('volumeChartCanvas', volumeChart);
+
+        if (rsiCanvas) {
+            const rsiSeries = computeRsiSeries(bars.map((b) => b.close), 14);
+            const rsiChart = new Chart(rsiCanvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'RSI',
+                            data: rsiSeries,
+                            borderColor: '#0ea5e9',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            tension: 0.15,
+                            spanGaps: true
+                        },
+                        {
+                            label: '70',
+                            data: labels.map(() => 70),
+                            borderColor: 'rgba(239,68,68,0.45)',
+                            borderWidth: 1,
+                            borderDash: [3, 3],
+                            pointRadius: 0
+                        },
+                        {
+                            label: '30',
+                            data: labels.map(() => 30),
+                            borderColor: 'rgba(16,185,129,0.45)',
+                            borderWidth: 1,
+                            borderDash: [3, 3],
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        zoom: zoomOpts,
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            filter: (item) => item.dataset.label === 'RSI',
+                            callbacks: {
+                                label: (ctx) =>
+                                    ctx.parsed.y != null ? `RSI ${ctx.parsed.y.toFixed(1)}` : ''
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            min: 0,
+                            max: 100,
+                            ticks: { color: colors.muted, font: { size: 9 }, stepSize: 30 },
+                            grid: { color: colors.grid }
+                        }
+                    },
+                    interaction: { mode: 'index', axis: 'x', intersect: false },
+                    onHover: (evt, els, chart) => {
+                        const i = els[0]?.index;
+                        if (i != null) self.syncChartCrosshair(chart, i);
+                    }
+                }
+            });
+            this.app.state.registerChart('rsiChartCanvas', rsiChart);
+        }
+
+        this.syncChartTfButtons();
+    }
+
+    syncChartTfButtons() {
+        const active = this.app.state.chartTimeframe || '1D';
+        this.els.chartTfButtons?.querySelectorAll('[data-chart-tf]').forEach((btn) => {
+            const on = btn.dataset.chartTf === active;
+            btn.className = `chart-tf-btn px-2 py-1 text-[10px] font-bold rounded ${
+                on ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500'
+            }`;
+        });
     }
 
     candleDatasets(bars, colors = this.chartColors()) {
@@ -1428,9 +1815,35 @@ export class UIController {
         }
     }
 
+    syncWeightSliders() {
+        const w = this.app.state.modelWeights || CONFIG.modelWeights || {};
+        if (this.els.weightMomentum) this.els.weightMomentum.value = Math.round(w.momentum ?? 50);
+        if (this.els.weightMeanRev) this.els.weightMeanRev.value = Math.round(w.meanReversion ?? 30);
+        if (this.els.weightGbm) this.els.weightGbm.value = Math.round(w.gbm ?? 20);
+        if (this.els.wMomLabel) this.els.wMomLabel.textContent = `${Math.round(w.momentum ?? 50)}%`;
+        if (this.els.wMrLabel) this.els.wMrLabel.textContent = `${Math.round(w.meanReversion ?? 30)}%`;
+        if (this.els.wGbmLabel) this.els.wGbmLabel.textContent = `${Math.round(w.gbm ?? 20)}%`;
+    }
+
+    applyWeightSliders() {
+        const momentum = Number(this.els.weightMomentum?.value) || 0;
+        const meanReversion = Number(this.els.weightMeanRev?.value) || 0;
+        const gbm = Number(this.els.weightGbm?.value) || 0;
+        this.app.state.setModelWeights({ momentum, meanReversion, gbm });
+        this.syncWeightSliders();
+        if (this.app.state.activeStock && this.app.state.detailTab === 'predict') {
+            const snap = this.app.state.getSnapshot(
+                this.app.state.activeStock.ticker,
+                this.app.state.activeRange
+            );
+            if (snap) this.renderPredictPanel(snap);
+        }
+        if (this.app.state.currentView === 'dashboard') this.renderDashboard();
+    }
+
     renderScalp(payload) {
         if (this.app.state.currentView !== 'scalp' || !payload) return;
-        const { tick, bars, metrics, signal, position, orders, feedMode, ticker } = payload;
+        const { tick, bars, metrics, signal, position, orders, feedMode, ticker, tape, dom } = payload;
 
         if (this.els.scalpFeedBadge) {
             const mode = feedMode || 'idle';
@@ -1467,7 +1880,69 @@ export class UIController {
         this.renderScalpEvents(signal?.events || []);
         this.renderScalpRisk(signal?.risk);
         this.renderScalpPosition(position, orders);
+        this.renderScalpTape(tape || []);
+        this.renderScalpDom(dom);
         this.drawScalpChart(bars || [], metrics);
+    }
+
+    renderScalpTape(tape) {
+        const host = this.els.scalpTape;
+        if (!host) return;
+        if (!tape.length) {
+            host.innerHTML = '<p class="text-zinc-400 font-sans">Waiting for prints…</p>';
+            return;
+        }
+        host.innerHTML = tape
+            .slice(0, 24)
+            .map((t) => {
+                const tone =
+                    t.side === 'buy' ? 'text-emerald-600' : t.side === 'sell' ? 'text-red-600' : 'text-zinc-500';
+                const block = t.block ? ' font-bold bg-amber-50' : '';
+                const time = new Date(t.t).toLocaleTimeString('en-PH', {
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                return `<div class="flex justify-between gap-2 px-1 py-0.5 ${tone}${block}">
+                    <span>${time}</span>
+                    <span>₱${Number(t.price).toFixed(2)}</span>
+                    <span>${Number(t.size).toLocaleString()}${t.block ? ' ▌' : ''}</span>
+                </div>`;
+            })
+            .join('');
+    }
+
+    renderScalpDom(dom) {
+        const host = this.els.scalpDom;
+        if (!host) return;
+        if (!dom?.asks?.length || !dom?.bids?.length) {
+            host.innerHTML = '<p class="text-zinc-400 font-sans">Building book…</p>';
+            return;
+        }
+        const maxSize = Math.max(
+            ...dom.asks.map((a) => a.size),
+            ...dom.bids.map((b) => b.size),
+            1
+        );
+        const row = (side, level) => {
+            const pct = Math.round((level.size / maxSize) * 100);
+            const bg =
+                side === 'ask'
+                    ? `linear-gradient(to left, rgba(239,68,68,0.2) ${pct}%, transparent ${pct}%)`
+                    : `linear-gradient(to right, rgba(16,185,129,0.2) ${pct}%, transparent ${pct}%)`;
+            return `<div class="flex justify-between px-1 py-0.5 ${side === 'ask' ? 'text-red-700' : 'text-emerald-700'}" style="background:${bg}">
+                <span>${Number(level.price).toFixed(2)}</span>
+                <span>${Number(level.size).toLocaleString()}</span>
+            </div>`;
+        };
+        host.innerHTML = `
+            <div class="mb-1 text-[9px] uppercase text-zinc-400">Ask</div>
+            ${dom.asks.map((a) => row('ask', a)).join('')}
+            <div class="my-1 text-center text-[10px] text-zinc-500 border-y border-zinc-100 py-1">Spread ₱${dom.spread ?? '—'}</div>
+            <div class="mb-1 text-[9px] uppercase text-zinc-400">Bid</div>
+            ${dom.bids.map((b) => row('bid', b)).join('')}
+        `;
     }
 
     renderScalpMetrics(metrics) {
@@ -1699,17 +2174,26 @@ export class UIController {
             ? `Pre-listing path · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`
             : `${snapshot.source === 'live' ? 'Live PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;
 
-        const shortPred = !isPreIpo ? buildTradingPredictions(snapshot.bars, 3) : null;
+        const shortPred = !isPreIpo
+            ? buildTradingPredictions(snapshot.bars, 3, { weights: this.app.state.modelWeights })
+            : null;
         const purchaseStats = suggestPurchase(
             stats.latestClose,
             stats.support,
             stats.resistance,
             stats.atr,
             CONFIG.starterRiskPesos,
-            shortPred?.ok ? { low: shortPred.low, high: shortPred.high } : null
+            shortPred?.ok
+                ? { low: shortPred.low, high: shortPred.high, expectedPct: shortPred.expectedPct }
+                : null,
+            { bars: snapshot.bars, weights: this.app.state.modelWeights }
         );
         const purchase = this.formatPurchaseLine(purchaseStats);
-        if (this.els.detailPurchaseAmount) this.els.detailPurchaseAmount.textContent = purchase.amount;
+        if (this.els.detailPurchaseAmount) {
+            this.els.detailPurchaseAmount.textContent = purchase.amount;
+            this.els.detailPurchaseAmount.classList.remove('text-red-600');
+            this.els.detailPurchaseAmount.classList.add('text-zinc-900');
+        }
         if (this.els.detailPurchaseMeta) {
             this.els.detailPurchaseMeta.textContent = isPreIpo
                 ? 'Practice only until listing.'
@@ -1717,7 +2201,13 @@ export class UIController {
         }
         if (!soft) this.setDetailTab('chart');
         this.updateInvestmentForecast();
-        this.renderActionSignal(buildTradeSignal(stats, { preIpo: isPreIpo, bars: snapshot.bars }));
+        this.renderActionSignal(
+            buildTradeSignal(stats, {
+                preIpo: isPreIpo,
+                bars: snapshot.bars,
+                weights: this.app.state.modelWeights
+            })
+        );
         this.renderPredictPanel(snapshot);
 
         if (this.els.preIpoBanner) {
@@ -1830,7 +2320,22 @@ export class UIController {
 
         const horizonId = this.app.state.predictHorizon || '3s';
         const sessions = (CONFIG.predictHorizons || []).find(h => h.id === horizonId)?.sessions || 3;
-        const pred = buildTradingPredictions(snap.bars, sessions);
+        this.syncWeightSliders();
+        const pred = buildTradingPredictions(snap.bars, sessions, {
+            weights: this.app.state.modelWeights
+        });
+
+        if (this.els.modelHitRateRow) {
+            if (pred.hitRates?.ok) {
+                const parts = (pred.hitRates.scores || [])
+                    .map((s) => `${s.name} ${s.pct != null ? `${s.pct}%` : '—'}`)
+                    .join(' · ');
+                this.els.modelHitRateRow.innerHTML = `Model accuracy (30d band hit): <strong>${pred.hitRates.overall}%</strong> · ${escapeHtml(parts)}`;
+            } else {
+                this.els.modelHitRateRow.textContent =
+                    pred.hitRates?.note || 'Model accuracy: need more history.';
+            }
+        }
 
         if (this.els.predictSummary) {
             if (!pred.ok) {
@@ -1838,9 +2343,10 @@ export class UIController {
             } else {
                 const sign = pred.expectedPct >= 0 ? '+' : '';
                 const proxy = pred.usedSessionProxy ? ' · OHLC sessions' : '';
+                const w = pred.weights || {};
                 this.els.predictSummary.innerHTML = `
                     <span class="has-tip">${sessions}S · ₱${pred.expected.toFixed(2)} (${sign}${pred.expectedPct}%)
-                    <span class="tip-bubble">${escapeHtml(pred.method)}${proxy}. Study only.</span></span>
+                    <span class="tip-bubble">${escapeHtml(pred.method)}${proxy}. Weights Mom ${Math.round(w.momentum || 0)} / MR ${Math.round(w.meanReversion || 0)} / GBM ${Math.round(w.gbm || 0)}. Study only.</span></span>
                     <span class="text-zinc-500 font-medium text-xs ml-1">₱${pred.low.toFixed(2)}–₱${pred.high.toFixed(2)}</span>`;
             }
         }
@@ -1881,6 +2387,7 @@ export class UIController {
             (pred.models || []).forEach(model => {
                 const card = document.createElement('div');
                 card.className = 'has-tip predict-model-card bg-zinc-50 border border-zinc-200 rounded-lg p-2.5';
+                const hit = pred.hitRates?.scores?.find((s) => s.id === model.id);
                 if (!model.ok) {
                     card.innerHTML = `
                         <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">${escapeHtml(model.name || 'Model')}</p>
@@ -1893,7 +2400,8 @@ export class UIController {
                         <p class="text-sm font-semibold text-zinc-900 mt-0.5">₱${model.expected.toFixed(2)}
                             <span class="${model.expectedPct >= 0 ? 'text-emerald-600' : 'text-red-600'}">(${sign}${model.expectedPct}%)</span></p>
                         <p class="text-[10px] text-zinc-500">₱${model.low.toFixed(2)}–₱${model.high.toFixed(2)}</p>
-                        <span class="tip-bubble">${escapeHtml(model.formula)}. ${escapeHtml(model.tip || '')}</span>`;
+                        <p class="text-[10px] font-semibold text-zinc-600 mt-1">Hit rate ${hit?.pct != null ? `${hit.pct}%` : '—'}</p>
+                        <span class="tip-bubble">${escapeHtml(model.formula)}. ${escapeHtml(model.tip || '')} Accuracy = % of days where next close landed in the model band.</span>`;
                 }
                 cards.appendChild(card);
             });
@@ -2152,13 +2660,22 @@ export class UIController {
         const ai = entry.aiSnapshot
             ? `<p class="mt-2 text-[11px] text-zinc-500"><span class="font-semibold">${escapeHtml(String(entry.aiSnapshot.action || ''))}</span> · ${escapeHtml(entry.aiSnapshot.rationale || '')}</p>`
             : '';
+        const strategy = entry.strategy || entry.tag
+            ? `<span class="inline-block mt-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600">${escapeHtml(entry.strategy || entry.tag)}</span>`
+            : '';
+        const pnl =
+            Number.isFinite(Number(entry.pnl))
+                ? `<p class="text-[11px] mt-1 ${Number(entry.pnl) >= 0 ? 'text-emerald-600' : 'text-red-600'}">PnL ₱${Number(entry.pnl).toFixed(2)}</p>`
+                : '';
         return `
             <div class="border border-zinc-200 rounded-lg p-4 bg-white">
                 <div class="flex justify-between items-start gap-3">
                     <div>
                         <p class="text-sm font-semibold text-zinc-900">${escapeHtml(entry.ticker)} · ${escapeHtml(entry.date)}</p>
+                        ${strategy}
                         <p class="text-xs text-zinc-600 mt-2">${escapeHtml(entry.thesis || '—')}</p>
                         <p class="text-[11px] text-zinc-500 mt-1">Invalidation: ${escapeHtml(entry.invalidation || '—')}</p>
+                        ${pnl}
                         ${ai}
                     </div>
                     <div class="flex flex-col items-end gap-2">
@@ -2178,6 +2695,40 @@ export class UIController {
         const entries = this.app.state.journal;
         this.els.journalEmpty.classList.toggle('hidden', entries.length > 0);
         this.els.journalList.innerHTML = entries.map(e => this.journalCardHtml(e)).join('');
+        this.renderJournalAnalytics();
+    }
+
+    renderJournalAnalytics() {
+        const host = this.els.journalAnalytics;
+        if (!host) return;
+        const a = this.app.state.journalAnalytics();
+        const cell = (label, value, tip) => `
+            <div class="bg-white border border-zinc-200 rounded-lg p-3 has-tip">
+                <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500">${label}</p>
+                <p class="text-lg font-semibold text-zinc-900 mt-0.5">${value ?? '—'}</p>
+                <span class="tip-bubble">${tip}</span>
+            </div>`;
+        host.innerHTML =
+            cell('Win rate', a.winRate != null ? `${a.winRate}%` : '—', 'Wins ÷ closed trades (paper + manual).') +
+            cell('Profit factor', a.profitFactor, 'Gross wins ÷ gross losses.') +
+            cell('Sharpe', a.sharpe, 'Mean PnL ÷ σ × √n (study approx).') +
+            cell('Trades', a.trades, 'All journal rows including open paper fills.');
+
+        const stratHost = this.els.journalStrategyList;
+        const wrap = this.els.journalStrategyBreak;
+        if (stratHost && wrap) {
+            if (!a.byStrategy.length) {
+                wrap.classList.add('hidden');
+            } else {
+                wrap.classList.remove('hidden');
+                stratHost.innerHTML = a.byStrategy
+                    .map((s) => {
+                        const wr = s.n ? Math.round((s.wins / s.n) * 100) : 0;
+                        return `<span class="px-2 py-1 rounded border border-zinc-200 bg-zinc-50">${escapeHtml(s.tag)} · ${s.n} · WR ${wr}% · ₱${Number(s.pnl).toFixed(0)}</span>`;
+                    })
+                    .join('');
+            }
+        }
     }
 
     renderDetailJournal(ticker) {

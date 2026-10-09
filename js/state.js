@@ -48,6 +48,10 @@ export class AppState {
         this.scalpTimeframe = '1m';
         this.sectorFilter = 'all';
         this.sortBy = 'watchlist';
+        this.smartFilter = localStorage.getItem('ta_smart_filter_v1') || 'all';
+        this.densityMode = localStorage.getItem('ta_density_v1') || 'cards';
+        this.chartTimeframe = '1D';
+        this.modelWeights = readJson('ta_model_weights_v1', { ...(CONFIG.modelWeights || {}) });
         this.currentView = 'dashboard';
         this.chartStyle = 'combo';
         this.chartBusy = false;
@@ -59,6 +63,29 @@ export class AppState {
         this.alertLog = readJson(CONFIG.storageKeys.alertLog, {});
         this.browserAlertsEnabled = localStorage.getItem('ta_browser_alerts') === '1';
         this.sectionLayout = this.loadSectionLayout();
+    }
+
+    setDensityMode(mode) {
+        this.densityMode = mode === 'table' ? 'table' : 'cards';
+        localStorage.setItem('ta_density_v1', this.densityMode);
+    }
+
+    setSmartFilter(filter) {
+        this.smartFilter = filter || 'all';
+        localStorage.setItem('ta_smart_filter_v1', this.smartFilter);
+    }
+
+    setModelWeights(weights) {
+        const gbm = Math.max(0, Number(weights.gbm) || 0);
+        const meanReversion = Math.max(0, Number(weights.meanReversion) || 0);
+        const momentum = Math.max(0, Number(weights.momentum) || 0);
+        const sum = gbm + meanReversion + momentum || 1;
+        this.modelWeights = {
+            gbm: Math.round((gbm / sum) * 100),
+            meanReversion: Math.round((meanReversion / sum) * 100),
+            momentum: Math.round((momentum / sum) * 100)
+        };
+        writeJson('ta_model_weights_v1', this.modelWeights);
     }
 
     defaultSectionLayout() {
@@ -242,6 +269,17 @@ export class AppState {
         return ((last - first) / first) * 100;
     }
 
+    stockStats(ticker) {
+        const snap = this.getSnapshot(ticker, CONFIG.dashboardRange);
+        if (!snap?.bars?.length) return null;
+        try {
+            // lazy import avoided — summarize via cached snapshot fields when present
+            return snap._stats || null;
+        } catch {
+            return null;
+        }
+    }
+
     visibleStocks() {
         let list = [...this.watchlist];
         if (this.sectorFilter !== 'all') {
@@ -253,8 +291,63 @@ export class AppState {
             list.sort((a, b) => a.name.localeCompare(b.name));
         } else if (this.sortBy === 'sector') {
             list.sort((a, b) => a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name));
+        } else if (this.sortBy === 'volume') {
+            list.sort((a, b) => {
+                const va = this.getSnapshot(a.ticker, CONFIG.dashboardRange)?.bars?.slice(-1)[0]?.volume || 0;
+                const vb = this.getSnapshot(b.ticker, CONFIG.dashboardRange)?.bars?.slice(-1)[0]?.volume || 0;
+                return vb - va;
+            });
+        } else if (this.sortBy === 'rsi') {
+            list.sort((a, b) => (a._rsi || 50) - (b._rsi || 50));
         }
         return list;
+    }
+
+    /**
+     * Journal performance: win rate, profit factor, Sharpe, by strategy tag.
+     */
+    journalAnalytics() {
+        const closed = (this.journal || []).filter((e) =>
+            e.outcome === 'win' || e.outcome === 'loss' || e.outcome === 'scratch' || Number.isFinite(e.pnl)
+        );
+        const withPnl = (this.journal || []).filter((e) => Number.isFinite(Number(e.pnl)));
+        const wins = closed.filter((e) => e.outcome === 'win' || Number(e.pnl) > 0);
+        const losses = closed.filter((e) => e.outcome === 'loss' || Number(e.pnl) < 0);
+        const winRate = closed.length ? (wins.length / closed.length) * 100 : null;
+        const grossWin = withPnl.filter((e) => Number(e.pnl) > 0).reduce((s, e) => s + Number(e.pnl), 0);
+        const grossLoss = Math.abs(
+            withPnl.filter((e) => Number(e.pnl) < 0).reduce((s, e) => s + Number(e.pnl), 0)
+        );
+        const profitFactor = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : null);
+        const pnls = withPnl.map((e) => Number(e.pnl));
+        let sharpe = null;
+        if (pnls.length >= 3) {
+            const m = pnls.reduce((a, b) => a + b, 0) / pnls.length;
+            const v = pnls.reduce((s, x) => s + (x - m) ** 2, 0) / (pnls.length - 1);
+            const sd = Math.sqrt(v);
+            sharpe = sd > 0 ? (m / sd) * Math.sqrt(Math.min(252, pnls.length)) : null;
+        }
+        const byStrategy = {};
+        (this.journal || []).forEach((e) => {
+            const tag = e.strategy || e.tag || 'Untagged';
+            if (!byStrategy[tag]) byStrategy[tag] = { tag, n: 0, wins: 0, pnl: 0 };
+            byStrategy[tag].n += 1;
+            if (e.outcome === 'win' || Number(e.pnl) > 0) byStrategy[tag].wins += 1;
+            if (Number.isFinite(Number(e.pnl))) byStrategy[tag].pnl += Number(e.pnl);
+        });
+        return {
+            trades: (this.journal || []).length,
+            closed: closed.length,
+            winRate: winRate != null ? parseFloat(winRate.toFixed(1)) : null,
+            profitFactor:
+                profitFactor == null
+                    ? null
+                    : profitFactor === Infinity
+                      ? '∞'
+                      : parseFloat(profitFactor.toFixed(2)),
+            sharpe: sharpe != null ? parseFloat(sharpe.toFixed(2)) : null,
+            byStrategy: Object.values(byStrategy).sort((a, b) => b.n - a.n)
+        };
     }
 
     /** Visible stocks grouped for dashboard sections (empty sections omitted by UI). */

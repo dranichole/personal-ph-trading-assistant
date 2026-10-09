@@ -15,6 +15,8 @@
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -108,9 +110,14 @@
                     <select id="sortSelect" class="px-3 py-2 text-xs border border-zinc-200 rounded bg-white">
                         <option value="watchlist">Watchlist order</option>
                         <option value="change">% change</option>
+                        <option value="volume">Volume</option>
                         <option value="name">Name</option>
                         <option value="sector">Sector</option>
                     </select>
+                    <div id="densityToggle" class="flex gap-1 bg-zinc-100 p-1 rounded" role="group" aria-label="Density">
+                        <button type="button" data-density="cards" class="density-btn px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded bg-white shadow-sm text-zinc-900">Cards</button>
+                        <button type="button" data-density="table" class="density-btn px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded text-zinc-500">Table</button>
+                    </div>
                     <div class="relative" id="sectionLayoutWrap">
                         <button type="button" id="sectionLayoutBtn"
                             class="px-3 py-2 text-xs border border-zinc-200 rounded bg-white text-zinc-600 hover:text-zinc-900 font-semibold">
@@ -123,8 +130,30 @@
                     </div>
                 </div>
             </div>
+            <div id="smartFilterBar" class="mb-4 flex flex-wrap gap-1.5">
+                <button type="button" data-smart-filter="all" class="smart-filter-btn px-2.5 py-1 text-[10px] font-semibold rounded border border-zinc-200 bg-white text-zinc-700">All</button>
+                <button type="button" data-smart-filter="volSpike" class="smart-filter-btn px-2.5 py-1 text-[10px] font-semibold rounded border border-zinc-200 bg-white text-zinc-600 has-tip">Vol spike &gt;2×<span class="tip-bubble">Last volume ≥ 2× average volume.</span></button>
+                <button type="button" data-smart-filter="rsiExtreme" class="smart-filter-btn px-2.5 py-1 text-[10px] font-semibold rounded border border-zinc-200 bg-white text-zinc-600 has-tip">RSI &lt;30 / &gt;70<span class="tip-bubble">Wilder RSI oversold or overbought.</span></button>
+                <button type="button" data-smart-filter="foreignFlow" class="smart-filter-btn px-2.5 py-1 text-[10px] font-semibold rounded border border-zinc-200 bg-white text-zinc-600 has-tip">Net flow +<span class="tip-bubble">Up-day vs down-day volume proxy when PSE foreign board feed is unavailable.</span></button>
+            </div>
             <p id="watchlistMessage" class="hidden mb-4 text-xs text-zinc-500"></p>
 
+            <div id="dashboardTableWrap" class="hidden mb-6 overflow-x-auto bg-white border border-zinc-200 rounded-lg shadow-sm">
+                <table id="dashboardTable" class="watchlist-table w-full text-left text-xs">
+                    <thead>
+                        <tr class="border-b border-zinc-100 text-[10px] uppercase tracking-widest text-zinc-500">
+                            <th class="px-3 py-2">Ticker</th>
+                            <th class="px-3 py-2">Last</th>
+                            <th class="px-3 py-2">% chg</th>
+                            <th class="px-3 py-2">Volume</th>
+                            <th class="px-3 py-2">RSI</th>
+                            <th class="px-3 py-2">Signal</th>
+                            <th class="px-3 py-2">Position target</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dashboardTableBody"></tbody>
+                </table>
+            </div>
             <div id="dashboardSections"></div>
             <p id="emptyWatchlist" class="hidden text-sm text-zinc-500">No names on the watchlist. Add a PSE ticker above.</p>
         </section>
@@ -189,21 +218,32 @@
                                     <h3 class="text-sm font-semibold text-zinc-900">Price action + trend line</h3>
                                     <p id="candleHelp" class="text-[11px] text-zinc-500 mt-1 max-w-lg">Candles show each day’s open, high, low, and close. The smooth line is the recent average with a soft fade underneath.</p>
                                 </div>
-                                <div id="chartStyleButtons" class="flex gap-1 bg-zinc-100 p-1 rounded shrink-0">
-                                    <button type="button" data-chart-style="combo" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded bg-white text-zinc-900 shadow-sm">Candles</button>
-                                    <button type="button" data-chart-style="line" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded text-zinc-500">Line</button>
+                                <div class="flex flex-wrap gap-1 shrink-0">
+                                    <div id="chartTfButtons" class="flex gap-1 bg-zinc-100 p-1 rounded">
+                                        <button type="button" data-chart-tf="1D" class="chart-tf-btn px-2 py-1 text-[10px] font-bold rounded bg-white shadow-sm text-zinc-900">1D</button>
+                                        <button type="button" data-chart-tf="4H" class="chart-tf-btn px-2 py-1 text-[10px] font-bold rounded text-zinc-500">4H</button>
+                                        <button type="button" data-chart-tf="1H" class="chart-tf-btn px-2 py-1 text-[10px] font-bold rounded text-zinc-500">1H</button>
+                                    </div>
+                                    <div id="chartStyleButtons" class="flex gap-1 bg-zinc-100 p-1 rounded">
+                                        <button type="button" data-chart-style="combo" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded bg-white text-zinc-900 shadow-sm">Candles</button>
+                                        <button type="button" data-chart-style="line" class="chart-style-btn px-2.5 py-1 text-[11px] font-semibold rounded text-zinc-500">Line</button>
+                                    </div>
                                 </div>
                             </div>
+                            <p class="text-[10px] text-zinc-400 mb-2">Scroll to zoom · drag to pan · 60–90 sessions when history allows</p>
                             <div id="chartPanel" class="relative">
                                 <div id="chartLoadingOverlay" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 rounded">
                                     <div class="loader mb-2"></div>
                                     <p id="chartLoadingText" class="text-xs font-medium text-zinc-600">Updating chart…</p>
                                 </div>
-                                <div class="relative w-full min-h-[280px]">
+                                <div class="relative w-full min-h-[320px]">
                                     <canvas id="largeChartCanvas"></canvas>
                                 </div>
                                 <div class="h-24 mt-4 relative w-full">
                                     <canvas id="volumeChartCanvas"></canvas>
+                                </div>
+                                <div class="h-28 mt-3 relative w-full">
+                                    <canvas id="rsiChartCanvas"></canvas>
                                 </div>
                             </div>
                         </div>
@@ -220,6 +260,21 @@
                                 <div id="predictHorizonButtons" class="flex flex-wrap gap-1 bg-zinc-100 p-1 rounded shrink-0"></div>
                             </div>
                             <p id="predictSummary" class="text-sm font-semibold text-zinc-900 mb-2">--</p>
+                            <div id="modelWeightPanel" class="mb-3 p-3 bg-zinc-50 border border-zinc-100 rounded-lg">
+                                <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Ensemble weights</p>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                                    <label class="block">Momentum <span id="wMomLabel" class="font-semibold text-zinc-800">50%</span>
+                                        <input id="weightMomentum" type="range" min="0" max="100" value="50" class="w-full accent-zinc-800">
+                                    </label>
+                                    <label class="block">Mean rev <span id="wMrLabel" class="font-semibold text-zinc-800">30%</span>
+                                        <input id="weightMeanRev" type="range" min="0" max="100" value="30" class="w-full accent-zinc-800">
+                                    </label>
+                                    <label class="block">GBM <span id="wGbmLabel" class="font-semibold text-zinc-800">20%</span>
+                                        <input id="weightGbm" type="range" min="0" max="100" value="20" class="w-full accent-zinc-800">
+                                    </label>
+                                </div>
+                                <p id="modelHitRateRow" class="mt-2 text-[11px] text-zinc-500">Model accuracy: —</p>
+                            </div>
                             <div class="relative w-full min-h-[240px]">
                                 <canvas id="predictChartCanvas"></canvas>
                             </div>
@@ -239,10 +294,10 @@
 
                 <div class="space-y-4">
                     <div id="detailPurchaseBox" class="has-tip bg-zinc-50 border border-zinc-200 rounded-lg p-3">
-                        <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Risk plan</p>
+                        <p class="text-[9px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Position target</p>
                         <p id="detailPurchaseAmount" class="text-sm font-semibold text-zinc-900">--</p>
                         <p id="detailPurchaseMeta" class="text-[11px] text-zinc-500 mt-1 leading-snug">--</p>
-                        <span class="tip-bubble">ATR trailing stop (1.5×) and practice size. Not advice.</span>
+                        <span class="tip-bubble">¼-Kelly × ATR trail from ensemble hit-rate. Capital allocation — not a loss. Study only.</span>
                     </div>
                     <div id="detailForecastBox" class="bg-zinc-50 border border-zinc-200 rounded-lg p-3 forecast-box">
                         <div class="has-tip mb-2">
@@ -365,7 +420,9 @@
                     </div>
                     <div id="scalpMetricsRow" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2"></div>
                     <div id="scalpEventsBox" class="bg-white border border-zinc-200 rounded-lg p-3">
-                        <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Live events</p>
+                        <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Time &amp; sales</p>
+                        <div id="scalpTape" class="scalp-tape space-y-0.5 text-[11px] font-mono max-h-40 overflow-y-auto"></div>
+                        <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mt-3 mb-1">Events</p>
                         <ul id="scalpEventList" class="space-y-1 text-[11px] text-zinc-600"></ul>
                     </div>
                 </div>
@@ -374,6 +431,12 @@
                     <div class="bg-white border border-zinc-200 rounded-lg p-3">
                         <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Risk (tick)</p>
                         <div id="scalpRiskRow" class="flex flex-wrap gap-2 text-[11px]"></div>
+                    </div>
+                    <div class="bg-white border border-zinc-200 rounded-lg p-3">
+                        <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2 has-tip">Level 2 / DOM
+                            <span class="tip-bubble">Synthetic depth from last price &amp; tape flow when a live order book feed is unavailable.</span>
+                        </p>
+                        <div id="scalpDom" class="scalp-dom text-[10px] font-mono"></div>
                     </div>
                     <div class="bg-white border border-zinc-200 rounded-lg p-3">
                         <div class="flex items-center justify-between gap-2 mb-2">
@@ -390,10 +453,16 @@
                                 class="w-full px-2 py-1.5 text-sm font-semibold rounded border border-zinc-200" aria-label="Order quantity">
                         </div>
                         <div class="grid grid-cols-2 gap-2">
-                            <button type="button" id="scalpBuyBtn" class="py-2 text-xs font-bold uppercase tracking-wide rounded bg-emerald-50 text-emerald-700 border border-emerald-100">Buy</button>
-                            <button type="button" id="scalpSellBtn" class="py-2 text-xs font-bold uppercase tracking-wide rounded bg-red-50 text-red-700 border border-red-100">Sell</button>
+                            <button type="button" id="scalpBuyAskBtn" class="py-2 text-xs font-bold uppercase tracking-wide rounded bg-emerald-50 text-emerald-700 border border-emerald-100" title="Shift+B">Buy Ask</button>
+                            <button type="button" id="scalpSellBidBtn" class="py-2 text-xs font-bold uppercase tracking-wide rounded bg-red-50 text-red-700 border border-red-100" title="Shift+S">Sell Bid</button>
                         </div>
+                        <div class="grid grid-cols-2 gap-2 mt-2">
+                            <button type="button" id="scalpBuyBtn" class="py-1.5 text-[10px] font-bold uppercase tracking-wide rounded border border-zinc-200 text-zinc-600">Buy</button>
+                            <button type="button" id="scalpSellBtn" class="py-1.5 text-[10px] font-bold uppercase tracking-wide rounded border border-zinc-200 text-zinc-600">Sell</button>
+                        </div>
+                        <button type="button" id="scalpFlattenBtn" class="mt-2 w-full py-1.5 text-[10px] font-semibold uppercase tracking-wide rounded bg-zinc-900 text-white" title="Esc">Flatten</button>
                         <button type="button" id="scalpTrailBtn" class="mt-2 w-full py-1.5 text-[10px] font-semibold uppercase tracking-wide rounded border border-zinc-200 text-zinc-600">Set ATR trail</button>
+                        <p class="text-[9px] text-zinc-400 mt-2">Hotkeys: Shift+B · Shift+S · Esc flatten</p>
                         <p id="scalpPosition" class="text-[11px] text-zinc-500 mt-2">No position</p>
                         <ul id="scalpOrderList" class="mt-2 space-y-1 text-[10px] text-zinc-500"></ul>
                     </div>
@@ -404,7 +473,12 @@
         <section id="journalView" class="hidden fade-in">
             <div class="mb-6">
                 <h2 class="text-lg font-semibold text-zinc-900">Trade journal</h2>
-                <p class="text-sm text-zinc-500 mt-1">Saved in your browser’s local storage, not on the server. Each visitor gets their own private journal on this device. Clearing site data or using another browser starts fresh.</p>
+                <p class="text-sm text-zinc-500 mt-1">Saved in your browser’s local storage. Paper ticket fills auto-log here. Clearing site data starts fresh.</p>
+            </div>
+            <div id="journalAnalytics" class="mb-6 grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+            <div id="journalStrategyBreak" class="mb-6 hidden bg-white border border-zinc-200 rounded-lg p-3">
+                <p class="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">By strategy</p>
+                <div id="journalStrategyList" class="flex flex-wrap gap-2 text-[11px]"></div>
             </div>
             <form id="journalForm" class="bg-white border border-zinc-200 rounded-lg p-5 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input id="journalTicker" type="text" placeholder="Ticker" maxlength="10" class="px-3 py-2 text-xs border border-zinc-200 rounded uppercase">
