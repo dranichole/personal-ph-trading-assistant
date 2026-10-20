@@ -70,6 +70,40 @@ export class CandleAggregator {
         return this.snapshot();
     }
 
+    /**
+     * Replace history with completed candles (ms timestamps). Live ticks continue after.
+     * @param {Array<{t:number,open:number,high:number,low:number,close:number,volume?:number,buyVol?:number,sellVol?:number}>} list
+     */
+    seedCandles(list) {
+        const rows = (list || []).filter((b) => Number(b.close) > 0);
+        this.candles = rows.slice(0, -1).slice(-this.maxBars).map((b) => ({
+            t: b.t,
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: Number(b.volume) || 0,
+            buyVol: Number(b.buyVol) || 0,
+            sellVol: Number(b.sellVol) || 0,
+            trades: 1
+        }));
+        const last = rows[rows.length - 1];
+        this.current = last
+            ? {
+                  t: last.t,
+                  open: last.open,
+                  high: last.high,
+                  low: last.low,
+                  close: last.close,
+                  volume: Number(last.volume) || 0,
+                  buyVol: Number(last.buyVol) || 0,
+                  sellVol: Number(last.sellVol) || 0,
+                  trades: 1
+              }
+            : null;
+        return this.snapshot();
+    }
+
     snapshot() {
         const bars = this.current ? [...this.candles, this.current] : [...this.candles];
         return bars.map((b) => ({

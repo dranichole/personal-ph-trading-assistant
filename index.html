@@ -440,8 +440,8 @@
             <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                     <h2 class="text-lg font-semibold text-zinc-900">Day trade / Scalp</h2>
-                    <p class="text-sm text-zinc-500 mt-1 has-tip">Intraday stream · event triggers · paper execution
-                        <span class="tip-bubble">WS → SSE → live last-price poll. Candles aggregate in-memory. Not EOD GBM.</span>
+                    <p class="text-sm text-zinc-500 mt-1 has-tip">Live candles · buy vs sell flow · paper execution
+                        <span class="tip-bubble">Each print updates the forming candle. Green candles are buy prints, red are sell prints. Flow bar is session buy volume vs sell volume.</span>
                     </p>
                 </div>
                 <div class="flex flex-wrap gap-2 items-center">
@@ -475,7 +475,14 @@
                                 <p id="scalpLastPrice" class="text-2xl font-bold text-zinc-900">—</p>
                                 <p id="scalpLastMeta" class="text-[11px] text-zinc-500">Waiting for ticks…</p>
                             </div>
-                            <p id="scalpAction" class="text-sm font-bold tracking-widest uppercase text-zinc-500">FLAT</p>
+                            <div class="text-right">
+                                <p id="scalpAction" class="text-sm font-bold tracking-widest uppercase text-zinc-500">FLAT</p>
+                                <p id="scalpFlowLabel" class="text-[11px] font-semibold text-zinc-500 mt-1">Flow —</p>
+                            </div>
+                        </div>
+                        <div id="scalpFlowBar" class="mb-2 h-2 w-full rounded overflow-hidden bg-zinc-100 flex" title="Buy volume vs sell volume">
+                            <div id="scalpFlowBuy" class="h-full bg-emerald-500" style="width:50%"></div>
+                            <div id="scalpFlowSell" class="h-full bg-red-500" style="width:50%"></div>
                         </div>
                         <div class="relative w-full min-h-[280px]">
                             <canvas id="scalpChartCanvas"></canvas>

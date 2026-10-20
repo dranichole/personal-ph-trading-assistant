@@ -24,10 +24,8 @@ module.exports = async function(req, res) {
             preIpo = null
         } = req.body;
 
-        const isGCashPreIpo =
-            String(ticker || '').toUpperCase() === 'GCASH' ||
-            dataSource === 'preipo' ||
-            Boolean(preIpo);
+        const isGCashListed = String(ticker || '').toUpperCase() === 'GCASH' && dataSource !== 'preipo' && !preIpo;
+        const isGCashPreIpo = dataSource === 'preipo' || Boolean(preIpo);
 
         const filing = preIpo || {
             listingTarget: 'October 20, 2026',
@@ -45,8 +43,10 @@ module.exports = async function(req, res) {
         };
 
         let dataNote;
-        if (isGCashPreIpo) {
-            dataNote = `CRITICAL: This is a SIMULATED pre-listing price path for GCash / Mynt (ticker GCASH). It is NOT live PSE trading until listing day. Never describe the chart as a live quote.
+        if (isGCashListed) {
+            dataNote = `GCASH (Mynt) listed on the PSE on October 20, 2026. IPO offer price was ₱${filing.finalOfferPrice ?? 6.60} (offer window ${filing.offerPeriod || 'October 6–12, 2026'}). Treat the series as a live listed stock. IPO price is context only, not the current quote.`;
+        } else if (isGCashPreIpo) {
+            dataNote = `CRITICAL: This is a SIMULATED pre-listing price path for GCash / Mynt (ticker GCASH). It is NOT live PSE trading. Never describe the chart as a live quote.
 Official IPO facts (current as of Oct 6 2026 offer open):
 - Final offer price: ₱${filing.finalOfferPrice ?? 6.60} per share
 - Retail / TP offer period OPEN: ${filing.offerPeriod || 'October 6–12, 2026'}
@@ -61,8 +61,10 @@ Frame as IPO-offer watch / educational subscription context. Prefer Hold/Neutral
             dataNote = 'Price series is from live PSE market data (Edge / phisix), in PHP.';
         }
 
-        const listingLabel = isGCashPreIpo
-            ? `${stockName || 'GCash (Mynt)'} · IPO OFFER OPEN (pre-listing path)`
+        const listingLabel = isGCashListed
+            ? `${stockName || 'GCash (Mynt)'} · PSE listed (GCASH)`
+            : isGCashPreIpo
+            ? `${stockName || 'GCash (Mynt)'} · pre-listing path`
             : `${stockName || ticker} (${ticker}.PS)`;
 
         const prompt = `You are an educational quantitative assistant for a personal Philippine markets journal. This is not financial advice.
@@ -87,7 +89,7 @@ ${dataNote}
 Return raw JSON only with keys:
 "trend" (Bullish, Bearish, or Neutral),
 "action" (Buy, Sell, or Hold),
-"rationale" (2-4 sentences grounding the call in the numbers above; for GCash always state this is an IPO-offer / pre-listing educational path anchored to Mynt filing figures and the ₱6.60 offer — not live PSE trading; include one invalidation level).
+"rationale" (2-4 sentences grounding the call in the numbers above; if GCASH, note it listed Oct 20 2026 and the ₱6.60 figure is the IPO offer price, not the live quote; include one invalidation level).
 Do not use markdown.`;
 
         const response = await fetch(

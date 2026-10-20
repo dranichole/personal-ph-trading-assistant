@@ -6,7 +6,7 @@
 const PH_CALENDAR = [
     { date: '2026-10-09', title: 'PSE trading session', type: 'market' },
     { date: '2026-10-16', title: 'BSP policy watch window', type: 'macro' },
-    { date: '2026-10-20', title: 'GCASH listing target (if unchanged)', type: 'ipo', tickers: ['GCASH'] },
+    { date: '2026-10-20', title: 'GCASH listed on the PSE', type: 'ipo', tickers: ['GCASH'] },
     { date: '2026-10-31', title: 'Month-end / fund rebalance watch', type: 'macro' },
     { date: '2026-11-14', title: 'Q3 earnings season (typical window)', type: 'earnings' },
     { date: '2026-12-25', title: 'Christmas holiday (PSE closed)', type: 'holiday' },

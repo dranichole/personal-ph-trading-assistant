@@ -19,7 +19,8 @@ const FALLBACK_BASE = {
     SHNG: 3.0,
     DMC: 7.39,
     COSCO: 7.4,
-    MREIT: 13.4
+    MREIT: 13.4,
+    GCASH: 6.6
 };
 
 function formatBarDate(timestampSec) {
@@ -433,27 +434,29 @@ export class DataService {
     }
 
     static async fetchHistoricalData(ticker, range = CONFIG.dashboardRange) {
-        if (ticker === GCASH_PRE_IPO.ticker) {
-            try {
-                const live = await fetchLiveSnapshot(ticker, range);
-                if (live.bars.length >= 3) {
-                    return {
-                        ...live,
-                        preIpo: false,
-                        filing: { ...GCASH_PRE_IPO },
-                        name: live.name || GCASH_PRE_IPO.name
-                    };
-                }
-            } catch {
-                /* not listed yet */
-            }
-            return this.generateGCashPreIpoForecast(range);
-        }
-
         try {
-            return await fetchLiveSnapshot(ticker, range);
+            const live = await fetchLiveSnapshot(ticker, range);
+            if (ticker === GCASH_PRE_IPO.ticker) {
+                return {
+                    ...live,
+                    preIpo: false,
+                    filing: { ...GCASH_PRE_IPO, listed: true, offerOpen: false },
+                    name: live.name || GCASH_PRE_IPO.name
+                };
+            }
+            return live;
         } catch (error) {
             console.warn(`Live data unavailable for ${ticker} (${range}): ${error.message}`);
+            if (ticker === GCASH_PRE_IPO.ticker) {
+                const fallback = this.generateFallbackData(ticker, range);
+                return {
+                    ...fallback,
+                    preIpo: false,
+                    filing: { ...GCASH_PRE_IPO, listed: true, offerOpen: false },
+                    name: GCASH_PRE_IPO.name,
+                    note: 'GCASH is listed. Live quote failed — practice series only until the feed returns.'
+                };
+            }
             return this.generateFallbackData(ticker, range);
         }
     }

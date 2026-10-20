@@ -5,20 +5,20 @@
  */
 
 /**
- * Mynt / GCash IPO tracker.
- * Offer period OPEN Oct 6–12, 2026 at ₱6.60. Listing targeted Oct 20, 2026 (ticker GCASH).
- * Chart stays a pre-listing educational path until live GCASH.PS quotes exist after listing.
+ * Mynt / GCash — listed on the PSE Main Board as GCASH on October 20, 2026.
+ * IPO offer was ₱6.60 (Oct 6–12). Charts and signals use live quotes from here on.
  */
 export const GCASH_PRE_IPO = {
     ticker: 'GCASH',
     name: 'GCash (Mynt)',
-    sector: 'Fintech · IPO Offer',
-    preIpo: true,
+    sector: 'Fintech',
+    preIpo: false,
     locked: true,
-    phase: 'offer-open',
+    phase: 'listed',
     listingTarget: 'October 20, 2026',
+    listed: true,
     offerPeriod: 'October 6–12, 2026',
-    offerOpen: true,
+    offerOpen: false,
     finalOfferPrice: 6.60,
     minSubscriptionShares: 100,
     minSubscriptionPesos: 660,
@@ -32,7 +32,7 @@ export const GCASH_PRE_IPO = {
     impliedValuationB: 442,
     priorMaxValuationB: 669,
     issuer: 'Mynt (GCash)',
-    note: 'IPO offer is open Oct 6–12, 2026 at ₱6.60 (min 100 shares / ₱660 via GCash GStocks PH). Shares are expected to list on the PSE Main Board as GCASH on Oct 20, 2026. Until then this card is an educational pre-listing path around the offer price — not a live PSE quote.'
+    note: 'GCASH listed on the PSE on October 20, 2026. IPO offer price was ₱6.60 (Oct 6–12 via GCash / GStocks PH, min 100 shares). Quotes and charts are live PSE prices from listing day onward.'
 };
 
 /** Large, liquid PSE names commonly treated as blue chips. */
@@ -76,7 +76,7 @@ export const WATCHLIST_SECTIONS = [
     {
         id: 'other',
         title: 'Special & Custom',
-        blurb: 'IPO watch (GCash offer open now) and tickers you add yourself.'
+        blurb: 'Newly listed GCASH and tickers you add yourself.'
     }
 ];
 
@@ -89,8 +89,9 @@ export const CONFIG = {
             name: GCASH_PRE_IPO.name,
             sector: GCASH_PRE_IPO.sector,
             group: 'other',
-            preIpo: true,
-            locked: true
+            preIpo: false,
+            locked: true,
+            listed: true
         }
     ],
     bluechipStocks: BLUECHIP_STOCKS,
@@ -168,7 +169,7 @@ export const CONFIG = {
      * Otherwise: SSE `/api/ticks` (Vercel) → live phisix poll on the client.
      */
     scalp: {
-        pollMs: 2500,
+        pollMs: 1200,
         defaultTimeframe: '1m',
         wsUrl: '', // e.g. wss://your-tick-gateway/stream
         defaultBroker: 'paper',

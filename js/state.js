@@ -179,7 +179,7 @@ export class AppState {
             ? stored.map(s => ({ ...s }))
             : CONFIG.defaultStocks.map(s => ({ ...s }));
 
-        // Keep GCash Pre-IPO card present and up to date.
+        // Keep listed GCASH on the watchlist and clear any saved pre-IPO flag.
         const gcash = CONFIG.defaultStocks.find(s => s.ticker === 'GCASH');
         if (gcash && !list.some(s => s.ticker === 'GCASH')) {
             list.push({ ...gcash });

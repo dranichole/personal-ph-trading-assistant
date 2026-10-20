@@ -60,7 +60,7 @@ Built as a vanilla JS single-page app (no React/Vue) with a small Vercel serverl
 - Clear “last close” wording (ending market price, not a sale price)
 - Educational **starter buy idea** (example size near support using a fixed practice risk budget)
 - Smooth fade tooltips on indicator tiles and key labels
-- **GCash IPO offer** card: offer **open Oct 6–12, 2026** at **₱6.60** (min 100 sh via GCash/GStocks); listing targeted **Oct 20, 2026** as `GCASH`; educational pre-listing path until live PSE quotes exist; AI gets offer-window context
+- **GCASH** is a listed PSE name (October 20, 2026). IPO offer was **₱6.60** (Oct 6–12); charts and signals use live quotes
 - Dashboard **Sections** menu: checklist to show/hide section bands and drag to reorder (saved in this browser)
 - **On-site alerts** (free): always-visible alert strip; banner when a name dips ≥3% or rises ≥3% vs prior close; **Enable** + **Test alert** for browser notifications; on-page toast so you can verify without waiting for a real move
 - **Strict math models** in `js/models.js`: GBM, adaptive OU/SMA mean reversion, ROC momentum, VWAP/volume confirm; 1–5 session Predict outlooks (OHLC session proxy when no PSE intraday feed)

@@ -151,8 +151,16 @@ class TradingAssistantApp {
         await this.scalp.start(t, {
             timeframeId: tf,
             wsUrl: CONFIG.scalp?.wsUrl || '',
-            pollMs: CONFIG.scalp?.pollMs || 2500
+            pollMs: CONFIG.scalp?.pollMs || 1200
         });
+        try {
+            const snap =
+                this.state.getSnapshot(t, '5d') ||
+                (await this.ensureSnapshot(t, '5d', { preferLive: true }));
+            if (snap?.bars?.length) this.scalp.seedFromDaily(snap.bars);
+        } catch {
+            /* live ticks still form candles */
+        }
     }
 
     async stopScalp() {
@@ -584,7 +592,7 @@ class TradingAssistantApp {
     async addTicker(rawTicker) {
         const ticker = rawTicker.trim().toUpperCase().replace(/\.PS$/i, '');
         if (ticker === 'GCASH') {
-            this.ui.setWatchlistMessage('GCash is already on the watchlist as a Pre-IPO forecast card.');
+            this.ui.setWatchlistMessage('GCASH is already on the watchlist as a listed PSE name.');
             return;
         }
         if (!/^[A-Z0-9]{1,10}$/.test(ticker)) {

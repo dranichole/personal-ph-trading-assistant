@@ -163,6 +163,49 @@ export class ScalpEngine {
         this._publish();
     }
 
+    /**
+     * Paint recent session candles from daily OHLC so the chart is moving
+     * before the first live print, then let ticks update the last candle.
+     */
+    seedFromDaily(dailyBars) {
+        const days = (dailyBars || []).filter((b) => Number(b.close) > 0).slice(-2);
+        if (!days.length || !this.aggregator) return;
+        const tf = this.aggregator.timeframeMs || 60_000;
+        const synth = [];
+        days.forEach((b) => {
+            const o = Number(b.open) || Number(b.close);
+            const h = Number(b.high) || Math.max(o, Number(b.close));
+            const l = Number(b.low) || Math.min(o, Number(b.close));
+            const c = Number(b.close);
+            const slots = Math.min(48, Math.max(12, Math.round((5.5 * 60 * 60 * 1000) / tf)));
+            const base = (Number(b.timestamp) || Math.floor(Date.now() / 1000)) * 1000;
+            const vol = (Number(b.volume) || slots) / slots;
+            let prev = o;
+            for (let i = 0; i < slots; i++) {
+                const u = i / (slots - 1 || 1);
+                let px;
+                if (u < 0.35) px = o + (h - o) * (u / 0.35);
+                else if (u < 0.7) px = h - (h - l) * ((u - 0.35) / 0.35);
+                else px = l + (c - l) * ((u - 0.7) / 0.3);
+                const buy = px >= prev;
+                synth.push({
+                    t: base + i * tf,
+                    open: prev,
+                    high: Math.max(prev, px, l),
+                    low: Math.min(prev, px, h),
+                    close: px,
+                    volume: vol,
+                    buyVol: buy ? vol : 0,
+                    sellVol: buy ? 0 : vol
+                });
+                prev = px;
+            }
+        });
+        this.aggregator.seedCandles(synth);
+        this._recompute();
+        this._publish();
+    }
+
     setTimeframe(timeframeId) {
         const tf = SCALP_TIMEFRAMES.find((t) => t.id === timeframeId);
         if (!tf || !this.ticker) return;

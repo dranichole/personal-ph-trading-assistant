@@ -92,6 +92,9 @@ export class UIController {
             scalpLastPrice: document.getElementById('scalpLastPrice'),
             scalpLastMeta: document.getElementById('scalpLastMeta'),
             scalpAction: document.getElementById('scalpAction'),
+            scalpFlowLabel: document.getElementById('scalpFlowLabel'),
+            scalpFlowBuy: document.getElementById('scalpFlowBuy'),
+            scalpFlowSell: document.getElementById('scalpFlowSell'),
             scalpMetricsRow: document.getElementById('scalpMetricsRow'),
             scalpEventList: document.getElementById('scalpEventList'),
             scalpRiskRow: document.getElementById('scalpRiskRow'),
@@ -2082,6 +2085,7 @@ export class UIController {
                       : 'text-zinc-500');
         }
 
+        this.renderScalpFlow(bars, metrics);
         this.renderScalpMetrics(metrics);
         this.renderScalpEvents(signal?.events || []);
         this.renderScalpRisk(signal?.risk);
@@ -2207,6 +2211,36 @@ export class UIController {
         }
     }
 
+    renderScalpFlow(bars, metrics) {
+        const label = this.els.scalpFlowLabel;
+        const buyEl = this.els.scalpFlowBuy;
+        const sellEl = this.els.scalpFlowSell;
+        if (!label || !buyEl || !sellEl) return;
+        const recent = (bars || []).slice(-20);
+        let buy = 0;
+        let sell = 0;
+        recent.forEach((b) => {
+            buy += Number(b.buyVol) || 0;
+            sell += Number(b.sellVol) || 0;
+            if (!b.buyVol && !b.sellVol) {
+                const vol = Number(b.volume) || 0;
+                if (Number(b.close) >= Number(b.open)) buy += vol;
+                else sell += vol;
+            }
+        });
+        const total = buy + sell || 1;
+        const buyPct = Math.round((buy / total) * 100);
+        const sellPct = 100 - buyPct;
+        buyEl.style.width = `${buyPct}%`;
+        sellEl.style.width = `${sellPct}%`;
+        const flow = Number(metrics?.orderFlow);
+        const tone = buyPct >= 58 ? 'Buying' : sellPct >= 58 ? 'Selling' : 'Balanced';
+        label.textContent = `${tone} · ${buyPct}% buy / ${sellPct}% sell${Number.isFinite(flow) ? ` · flow ${flow}` : ''}`;
+        label.className =
+            'text-[11px] font-semibold mt-1 ' +
+            (tone === 'Buying' ? 'text-emerald-600' : tone === 'Selling' ? 'text-red-600' : 'text-zinc-500');
+    }
+
     renderScalpMetrics(metrics) {
         const host = this.els.scalpMetricsRow;
         if (!host) return;
@@ -2303,90 +2337,109 @@ export class UIController {
     }
 
     drawScalpChart(bars, metrics) {
-        if (!bars.length) return;
+        if (!bars.length || typeof Chart === 'undefined') return;
         const colors = this.chartColors();
         const labels = bars.map((b) => b.date);
-        const closes = bars.map((b) => b.close);
-        const seriesPack = [
-            { key: 'Close', data: closes },
-            { key: 'VWAP', data: metrics?.series?.vwap || null },
-            { key: 'EMA9', data: metrics?.series?.ema9 || null },
-            { key: 'HMA', data: metrics?.series?.hma || null }
-        ];
+        const palette = bars.map((b) => {
+            const buy = Number(b.buyVol) || 0;
+            const sell = Number(b.sellVol) || 0;
+            if (buy || sell) return buy >= sell ? colors.up : colors.down;
+            return Number(b.close) >= Number(b.open) ? colors.up : colors.down;
+        });
         const existing = this.app.state.chartInstances?.scalpChartCanvas;
-        if (existing && existing.data?.datasets?.length === seriesPack.filter((s) => s.data).length) {
+        if (existing?.options?.plugins?.scalpLive) {
             existing.data.labels = labels;
-            let di = 0;
-            seriesPack.forEach((s) => {
-                if (!s.data) return;
-                if (existing.data.datasets[di]) existing.data.datasets[di].data = s.data;
-                di += 1;
-            });
+            if (existing.data.datasets[0]) {
+                existing.data.datasets[0].data = bars.map((b) => this.wickRange(b));
+                existing.data.datasets[0].backgroundColor = palette;
+            }
+            if (existing.data.datasets[1]) {
+                existing.data.datasets[1].data = bars.map((b) => this.bodyRange(b));
+                existing.data.datasets[1].backgroundColor = palette;
+            }
+            if (existing.data.datasets[2] && metrics?.series?.vwap) existing.data.datasets[2].data = metrics.series.vwap;
+            if (existing.data.datasets[3] && metrics?.series?.ema9) existing.data.datasets[3].data = metrics.series.ema9;
             existing.update('none');
             return;
         }
         const canvas = this.resetChartCanvas('scalpChartCanvas');
         if (!canvas) return;
-        const datasets = [];
-        if (closes.length) {
-            datasets.push({
-                label: 'Close',
-                data: closes,
-                borderColor: colors.line,
-                backgroundColor: colors.area,
-                borderWidth: 1.5,
-                pointRadius: 0,
-                tension: 0.15,
-                fill: true
-            });
-        }
-        if (metrics?.series?.vwap) {
-            datasets.push({
+        const bodyThickness = bars.length > 80 ? 3 : bars.length > 40 ? 5 : 7;
+        const datasets = [
+            {
+                type: 'bar',
+                label: 'Wick',
+                data: bars.map((b) => this.wickRange(b)),
+                backgroundColor: palette,
+                borderWidth: 0,
+                barThickness: Math.max(1, Math.round(bodyThickness / 6)),
+                order: 3
+            },
+            {
+                type: 'bar',
+                label: 'Candle',
+                data: bars.map((b) => this.bodyRange(b)),
+                backgroundColor: palette,
+                borderWidth: 0,
+                barThickness: bodyThickness,
+                order: 2
+            },
+            {
+                type: 'line',
                 label: 'VWAP',
-                data: metrics.series.vwap,
+                data: metrics?.series?.vwap || bars.map(() => null),
                 borderColor: '#d97706',
                 borderWidth: 1.25,
                 borderDash: [4, 3],
                 pointRadius: 0,
-                tension: 0,
-                fill: false
-            });
-        }
-        if (metrics?.series?.ema9) {
-            datasets.push({
+                spanGaps: true,
+                order: 1
+            },
+            {
+                type: 'line',
                 label: 'EMA9',
-                data: metrics.series.ema9,
+                data: metrics?.series?.ema9 || bars.map(() => null),
                 borderColor: '#059669',
                 borderWidth: 1,
                 pointRadius: 0,
-                tension: 0,
-                fill: false
-            });
-        }
-        if (metrics?.series?.hma) {
-            datasets.push({
-                label: 'HMA',
-                data: metrics.series.hma,
-                borderColor: '#7c3aed',
-                borderWidth: 1,
-                pointRadius: 0,
-                tension: 0,
-                fill: false
-            });
-        }
+                spanGaps: true,
+                order: 1
+            }
+        ];
         const chart = new Chart(canvas.getContext('2d'), {
-            type: 'line',
+            type: 'bar',
             data: { labels, datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false,
+                datasets: { bar: { grouped: false } },
                 plugins: {
+                    scalpLive: true,
                     legend: {
                         display: true,
-                        labels: { boxWidth: 10, font: { size: 9 }, color: colors.muted }
+                        labels: {
+                            boxWidth: 10,
+                            font: { size: 9 },
+                            color: colors.muted,
+                            filter: (item) => item.text === 'VWAP' || item.text === 'EMA9'
+                        }
                     },
-                    tooltip: { mode: 'index', intersect: false }
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        filter: (item) => item.dataset.label === 'Candle' || item.dataset.label === 'VWAP',
+                        callbacks: {
+                            label: (ctx) => {
+                                const b = bars[ctx.dataIndex];
+                                if (!b || ctx.dataset.label !== 'Candle') {
+                                    return ctx.parsed.y != null ? `${ctx.dataset.label} ₱${Number(ctx.parsed.y).toFixed(2)}` : '';
+                                }
+                                const side = (Number(b.buyVol) || 0) >= (Number(b.sellVol) || 0) ? 'buy' : 'sell';
+                                return `O ${b.open.toFixed(2)} H ${b.high.toFixed(2)} L ${b.low.toFixed(2)} C ${b.close.toFixed(2)} · ${side}`;
+                            }
+                        }
+                    }
                 },
                 scales: {
                     x: {
