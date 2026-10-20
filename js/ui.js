@@ -90,7 +90,10 @@ export class UIController {
             scalpTfButtons: document.getElementById('scalpTfButtons'),
             scalpFeedBadge: document.getElementById('scalpFeedBadge'),
             scalpLastPrice: document.getElementById('scalpLastPrice'),
+            scalpBoardPrice: document.getElementById('scalpBoardPrice'),
+            scalpBoardMeta: document.getElementById('scalpBoardMeta'),
             scalpLastMeta: document.getElementById('scalpLastMeta'),
+            detailListingNote: document.getElementById('detailListingNote'),
             scalpAction: document.getElementById('scalpAction'),
             scalpFlowLabel: document.getElementById('scalpFlowLabel'),
             scalpFlowBuy: document.getElementById('scalpFlowBuy'),
@@ -1189,9 +1192,12 @@ export class UIController {
                 </div>` : ''}
             <div class="flex justify-between items-end mb-2">
                 <div class="has-tip">
-                    <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">${isPreIpo ? 'Model price' : 'Last close'}</p>
+                    <p class="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">${isPreIpo ? 'Model price' : 'Listing'}</p>
                     <p class="text-xl font-bold text-zinc-900">${latest == null ? 'Loading...' : '₱' + latest.toFixed(2)}</p>
-                    <p class="text-[10px] text-zinc-500 mt-1">${isPreIpo ? 'Simulated, not a PSE quote' : 'Ending market price'}</p>
+                    <p class="text-[10px] text-zinc-500 mt-1">${isPreIpo ? 'Simulated, not a PSE quote' : 'Present market price'}</p>
+                    ${!isPreIpo && stock.ticker === 'GCASH' && ipoPrice && latest != null && Math.abs(latest - ipoPrice) >= 0.005
+                        ? `<p class="text-[10px] text-zinc-500 mt-1">IPO offer was ₱${ipoPrice.toFixed(2)}</p>`
+                        : ''}
                     <span class="tip-bubble">${isPreIpo
                         ? (filing?.offerOpen
                             ? 'Offer is open now. Chart is still educational until GCASH lists on the PSE.'
@@ -2052,7 +2058,7 @@ export class UIController {
 
     renderScalp(payload) {
         if (this.app.state.currentView !== 'scalp' || !payload) return;
-        const { tick, bars, metrics, signal, position, orders, feedMode, ticker, tape, dom } = payload;
+        const { tick, bars, metrics, signal, position, orders, feedMode, ticker, tape, dom, listingPrice, prevClose } = payload;
 
         if (this.els.scalpFeedBadge) {
             const mode = feedMode || 'idle';
@@ -2068,9 +2074,26 @@ export class UIController {
                         : 'bg-zinc-100 text-zinc-500');
         }
 
-        if (tick?.price != null) {
-            this.els.scalpLastPrice.textContent = `₱${Number(tick.price).toFixed(2)}`;
-            this.els.scalpLastMeta.textContent = `${ticker} · ${tick.side || '—'} · size ${tick.size ?? '—'} · ${new Date(tick.t).toLocaleTimeString('en-PH', { hour12: false })}`;
+        const lastTrade = Number(tick?.price);
+        const listing = Number(listingPrice);
+        const board = listing > 0 ? listing : lastTrade;
+        if (board > 0 && this.els.scalpBoardPrice) {
+            this.els.scalpBoardPrice.textContent = `₱${board.toFixed(2)}`;
+            const prior = Number(prevClose);
+            if (this.els.scalpBoardMeta) {
+                if (prior > 0 && Math.abs(prior - board) >= 0.005) {
+                    const chg = board - prior;
+                    this.els.scalpBoardMeta.textContent = `Prior close ₱${prior.toFixed(2)} (${chg >= 0 ? '+' : ''}${chg.toFixed(2)})`;
+                } else {
+                    this.els.scalpBoardMeta.textContent = 'Present market price';
+                }
+            }
+        }
+        if (lastTrade > 0 && this.els.scalpLastPrice) {
+            this.els.scalpLastPrice.textContent = `₱${lastTrade.toFixed(2)}`;
+            this.els.scalpLastMeta.textContent = `${ticker} · ${tick?.side || '—'} · size ${tick?.size ?? '—'} · ${new Date(tick?.t || Date.now()).toLocaleTimeString('en-PH', { hour12: false })}`;
+        } else if (board > 0 && this.els.scalpLastPrice) {
+            this.els.scalpLastPrice.textContent = `₱${board.toFixed(2)}`;
         }
 
         const action = signal?.action || 'FLAT';
@@ -2092,7 +2115,7 @@ export class UIController {
         this.renderScalpPosition(position, orders);
         this.renderScalpTape(tape || []);
         this.renderScalpDom(dom);
-        this.drawScalpChart(bars || [], metrics);
+        this.drawScalpChart(bars || [], metrics, (lastTrade > 0 ? lastTrade : board) || null, listing > 0 ? listing : null);
     }
 
     tapeHtml(tape) {
@@ -2141,7 +2164,10 @@ export class UIController {
         return `
             <div class="mb-1 text-[9px] uppercase text-zinc-400">Ask</div>
             ${dom.asks.map((a) => row('ask', a)).join('')}
-            <div class="my-1 text-center text-[10px] text-zinc-500 border-y border-zinc-100 py-1">Spread ₱${dom.spread ?? '—'}</div>
+            <div class="my-1 text-center border-y border-zinc-200 py-1.5">
+                <div class="text-sm font-bold text-zinc-900">Last ₱${dom.last != null ? Number(dom.last).toFixed(2) : '—'}</div>
+                <div class="text-[9px] text-zinc-500">Spread ₱${dom.spread ?? '—'} · asks above this are not the price</div>
+            </div>
             <div class="mb-1 text-[9px] uppercase text-zinc-400">Bid</div>
             ${dom.bids.map((b) => row('bid', b)).join('')}
         `;
@@ -2336,10 +2362,33 @@ export class UIController {
         }
     }
 
-    drawScalpChart(bars, metrics) {
+    scalpPriceWindow(bars, marks) {
+        let lo = Infinity;
+        let hi = -Infinity;
+        (bars || []).forEach((b) => {
+            lo = Math.min(lo, Number(b.low), Number(b.open), Number(b.close));
+            hi = Math.max(hi, Number(b.high), Number(b.open), Number(b.close));
+        });
+        const extra = Array.isArray(marks) ? marks : [marks];
+        extra.forEach((mark) => {
+            const n = Number(mark);
+            if (n > 0) {
+                lo = Math.min(lo, n);
+                hi = Math.max(hi, n);
+            }
+        });
+        if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+        const span = Math.max(hi - lo, hi * 0.004, 0.5);
+        const pad = Math.max(span * 0.35, 0.25);
+        return { min: lo - pad, max: hi + pad };
+    }
+
+    drawScalpChart(bars, metrics, lastPrice, listingPrice) {
         if (!bars.length || typeof Chart === 'undefined') return;
         const colors = this.chartColors();
         const labels = bars.map((b) => b.date);
+        const lastPx = Number(lastPrice) > 0 ? Number(lastPrice) : Number(bars[bars.length - 1].close);
+        const window = this.scalpPriceWindow(bars, [lastPx, listingPrice]);
         const palette = bars.map((b) => {
             const buy = Number(b.buyVol) || 0;
             const sell = Number(b.sellVol) || 0;
@@ -2347,8 +2396,13 @@ export class UIController {
             return Number(b.close) >= Number(b.open) ? colors.up : colors.down;
         });
         const existing = this.app.state.chartInstances?.scalpChartCanvas;
-        if (existing?.options?.plugins?.scalpLive) {
+        if (existing?.options?.plugins?.scalpLive && existing.data.datasets.length >= 5) {
             existing.data.labels = labels;
+            existing.$lastPrice = lastPx;
+            if (window) {
+                existing.options.scales.y.min = window.min;
+                existing.options.scales.y.max = window.max;
+            }
             if (existing.data.datasets[0]) {
                 existing.data.datasets[0].data = bars.map((b) => this.wickRange(b));
                 existing.data.datasets[0].backgroundColor = palette;
@@ -2359,6 +2413,10 @@ export class UIController {
             }
             if (existing.data.datasets[2] && metrics?.series?.vwap) existing.data.datasets[2].data = metrics.series.vwap;
             if (existing.data.datasets[3] && metrics?.series?.ema9) existing.data.datasets[3].data = metrics.series.ema9;
+            if (existing.data.datasets[4]) {
+                existing.data.datasets[4].data = bars.map(() => lastPx);
+                existing.data.datasets[4].label = `Last ₱${lastPx.toFixed(2)}`;
+            }
             existing.update('none');
             return;
         }
@@ -2404,11 +2462,42 @@ export class UIController {
                 pointRadius: 0,
                 spanGaps: true,
                 order: 1
+            },
+            {
+                type: 'line',
+                label: `Last ₱${lastPx.toFixed(2)}`,
+                data: bars.map(() => lastPx),
+                borderColor: colors.ink || '#f4f4f5',
+                borderWidth: 1,
+                pointRadius: 0,
+                order: 0
             }
         ];
         const chart = new Chart(canvas.getContext('2d'), {
             type: 'bar',
             data: { labels, datasets },
+            plugins: [
+                {
+                    id: 'scalpLastTag',
+                    afterDraw(c) {
+                        const price = c.$lastPrice;
+                        const scale = c.scales?.y;
+                        if (!(price > 0) || !scale) return;
+                        const y = scale.getPixelForValue(price);
+                        const ctx = c.ctx;
+                        const text = `₱${price.toFixed(2)}`;
+                        ctx.save();
+                        ctx.font = 'bold 11px sans-serif';
+                        const w = ctx.measureText(text).width + 10;
+                        const x = c.chartArea.right - w;
+                        ctx.fillStyle = '#18181b';
+                        ctx.fillRect(x, y - 8, w, 16);
+                        ctx.fillStyle = '#fafafa';
+                        ctx.fillText(text, x + 5, y + 4);
+                        ctx.restore();
+                    }
+                }
+            ],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -2422,7 +2511,7 @@ export class UIController {
                             boxWidth: 10,
                             font: { size: 9 },
                             color: colors.muted,
-                            filter: (item) => item.text === 'VWAP' || item.text === 'EMA9'
+                            filter: (item) => item.text === 'VWAP' || item.text === 'EMA9' || String(item.text).startsWith('Last')
                         }
                     },
                     tooltip: {
@@ -2447,12 +2536,20 @@ export class UIController {
                         grid: { display: false }
                     },
                     y: {
-                        ticks: { color: colors.muted, font: { size: 9 } },
+                        beginAtZero: false,
+                        min: window?.min,
+                        max: window?.max,
+                        ticks: {
+                            color: colors.muted,
+                            font: { size: 9 },
+                            callback: (v) => `₱${Number(v).toFixed(2)}`
+                        },
                         grid: { color: colors.grid }
                     }
                 }
             }
         });
+        chart.$lastPrice = lastPx;
         this.app.state.registerChart('scalpChartCanvas', chart);
     }
 
@@ -2486,6 +2583,13 @@ export class UIController {
         const up = stats.pctChange >= 0;
         this.els.detailPctChange.textContent = `${up ? '+' : ''}${stats.pctChange.toFixed(2)}%`;
         this.els.detailPctChange.className = `text-sm font-semibold mt-1 ${up ? 'text-emerald-600' : 'text-red-600'}`;
+        if (this.els.detailListingNote) {
+            const offer = Number(filing?.finalOfferPrice);
+            this.els.detailListingNote.textContent =
+                !isPreIpo && stock.ticker === 'GCASH' && offer > 0 && Math.abs(stats.latestClose - offer) >= 0.005
+                    ? `Present market price. IPO offer was ₱${offer.toFixed(2)}.`
+                    : 'Present market price.';
+        }
         this.els.detailDataMeta.textContent = isPreIpo
             ? `Pre-listing path · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`
             : `${snapshot.source === 'live' ? 'Live PSE' : 'Simulated practice data'} · ${this.rangeLabel(snapshot.range)} · as of ${formatFetchedAt(snapshot.fetchedAt)}`;

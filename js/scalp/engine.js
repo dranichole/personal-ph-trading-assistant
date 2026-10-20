@@ -30,6 +30,9 @@ export class ScalpEngine {
         this.tape = [];
         this.dom = { bids: [], asks: [], spread: null };
         this.onFill = null;
+        this.listingPrice = null;
+        this.quoteClose = null;
+        this.prevClose = null;
     }
 
     /** Synthetic Level-2 from last trade + recent tape imbalance. */
@@ -59,7 +62,8 @@ export class ScalpEngine {
             asks: asks.reverse(),
             spread: parseFloat((asks[asks.length - 1].price - bids[0].price).toFixed(4)),
             bestBid: bids[0].price,
-            bestAsk: asks[asks.length - 1].price
+            bestAsk: asks[asks.length - 1].price,
+            last: mid
         };
     }
 
@@ -81,7 +85,9 @@ export class ScalpEngine {
             position: this.broker.getPosition(this.ticker),
             orders: this.broker.listOrders(this.ticker),
             tape: this.tape.slice(0, 40),
-            dom: this.dom
+            dom: this.dom,
+            listingPrice: this.quoteClose || this.listingPrice,
+            prevClose: this.prevClose
         };
         this.listeners.forEach((fn) => {
             try {
@@ -170,6 +176,11 @@ export class ScalpEngine {
     seedFromDaily(dailyBars) {
         const days = (dailyBars || []).filter((b) => Number(b.close) > 0).slice(-2);
         if (!days.length || !this.aggregator) return;
+        const lastDay = days[days.length - 1];
+        const prior = days.length > 1 ? days[days.length - 2] : null;
+        this.quoteClose = Number(lastDay.close);
+        this.listingPrice = this.quoteClose;
+        this.prevClose = prior ? Number(prior.close) : Number(lastDay.open) || null;
         const tf = this.aggregator.timeframeMs || 60_000;
         const synth = [];
         days.forEach((b) => {

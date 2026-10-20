@@ -180,6 +180,13 @@ async function fetchPhisixJson(path) {
     }
 }
 
+/** Phisix printed ₱10 placeholders before GCASH listed. Keep the offer-price day and the live prints. */
+function keepListedGcashBars(bars) {
+    const cutoff = Math.floor(Date.parse('2026-10-19T00:00:00+08:00') / 1000);
+    const kept = (bars || []).filter((b) => Number(b.timestamp) >= cutoff && Number(b.close) > 0);
+    return kept.length ? kept : bars || [];
+}
+
 function stitchCloses(bars) {
     const sorted = normalizeBars(bars);
     return sorted.map((b, i) => {
@@ -439,6 +446,7 @@ export class DataService {
             if (ticker === GCASH_PRE_IPO.ticker) {
                 return {
                     ...live,
+                    bars: keepListedGcashBars(live.bars),
                     preIpo: false,
                     filing: { ...GCASH_PRE_IPO, listed: true, offerOpen: false },
                     name: live.name || GCASH_PRE_IPO.name

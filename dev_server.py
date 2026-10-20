@@ -151,6 +151,11 @@ def build_quote(ticker: str, range_id: str) -> dict:
             continue
 
     stitched = _stitch_closes(bars)
+    if ticker == "GCASH":
+        cutoff = int(datetime.fromisoformat("2026-10-19T00:00:00+08:00").timestamp())
+        listed = [b for b in stitched if b["timestamp"] >= cutoff and b["close"] > 0]
+        if listed:
+            stitched = listed
     if len(stitched) < 2:
         raise RuntimeError("phisix insufficient history")
 
